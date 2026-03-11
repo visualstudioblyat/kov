@@ -1,0 +1,26 @@
+import board::esp32c3;
+
+board esp32c3 {
+    gpio: GPIO @ 0x6000_4000,
+    uart: UART @ 0x6000_0000,
+    clock: 160_000_000,
+}
+
+#[stack(512)]
+fn main(b: &mut esp32c3) {
+    let led = b.gpio.pin(2, .output);
+    let tx = b.uart.open(115200);
+
+    loop {
+        led.high();
+        delay_ms(500);
+        led.low();
+        delay_ms(500);
+        tx.write("blink\n");
+    }
+}
+
+interrupt(timer0, priority = 2) fn on_tick() {
+    static mut counter: u32 = 0;
+    counter += 1;
+}
