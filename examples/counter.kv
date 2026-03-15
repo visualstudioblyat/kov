@@ -1,0 +1,17 @@
+board gd32vf103 {
+    gpio: GPIO @ 0x4001_0800,
+    clock: 108_000_000,
+}
+
+fn main(b: &mut gd32vf103) {
+    let led = b.gpio.pin(13, .output);
+    let mut count: u32 = 0;
+
+    for i in 0..10 #[bound(10)] {
+        led.high();
+        delay_ms(200);
+        led.low();
+        delay_ms(200);
+        count = count + 1;
+    }
+}

@@ -1,0 +1,9 @@
+board esp32c3 {
+    uart: UART @ 0x6000_0000,
+    clock: 160_000_000,
+}
+
+fn main(b: &mut esp32c3) {
+    let tx = b.uart.open(115200);
+    tx.write("hello from kov\n");
+}

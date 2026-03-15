@@ -4,6 +4,7 @@ mod types;
 mod ir;
 mod codegen;
 mod emu;
+mod errors;
 
 use std::process;
 use std::time::Instant;
@@ -52,9 +53,11 @@ fn compile(source: &str) -> CompileResult {
         Err(e) => die(&format!("{e}")),
     };
 
-    if let Err(errors) = types::check::TypeChecker::new().check(&program) {
-        for e in &errors { eprintln!("error: {e}"); }
-        die(&format!("{} type error(s)", errors.len()));
+    if let Err(type_errors) = types::check::TypeChecker::new().check(&program) {
+        for e in &type_errors {
+            eprint!("{}", errors::format_error(source, e.span, &e.message));
+        }
+        die(&format!("{} type error(s)", type_errors.len()));
     }
 
     let board_name = program.items.iter().find_map(|item| {

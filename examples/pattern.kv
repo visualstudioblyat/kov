@@ -1,0 +1,26 @@
+board ch32v003 {
+    gpio: GPIO @ 0x4001_1000,
+    clock: 48_000_000,
+}
+
+fn main(b: &mut ch32v003) {
+    let led0 = b.gpio.pin(0, .output);
+    let led1 = b.gpio.pin(1, .output);
+    let led2 = b.gpio.pin(2, .output);
+
+    loop {
+        led0.high();
+        delay_ms(100);
+        led0.low();
+
+        led1.high();
+        delay_ms(100);
+        led1.low();
+
+        led2.high();
+        delay_ms(100);
+        led2.low();
+
+        delay_ms(300);
+    }
+}

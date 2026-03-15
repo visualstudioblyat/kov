@@ -1,5 +1,7 @@
 # kov
 
+![CI](https://github.com/visualstudioblyat/kov/actions/workflows/ci.yml/badge.svg)
+
 A systems language and compiler for RISC-V bare metal. No LLVM, no runtime, no external toolchain. Source code goes in, firmware binary comes out.
 
 ## why
@@ -24,18 +26,29 @@ No single tool does all of this, so I'm building one that does. Mostly for mysel
 
 ## where it is now
 
-The compiler can lex and parse Kov source files and lower them to SSA IR. Code generation is next.
+The compiler works end-to-end. It compiles Kov source to RISC-V machine code and runs it in a built-in emulator that verifies GPIO register writes.
 
 ```
-blink.kv -> [lexer] -> 129 tokens -> [parser] -> AST -> [lower] -> SSA IR -> [codegen] -> ???
+$ kov run examples/blink.kv
+  compiled: 416 bytes in 0.3ms
+  executed: 2000 cycles in 0.2ms
+  io:       215 writes
+            [0x60004004] ← 0x4    ← GPIO pin 2 HIGH
+            [0x60004008] ← 0x4    ← GPIO pin 2 LOW
+            ...repeating
 ```
 
-## building
+80 tests, 4 example programs, ~4,500 lines of Rust.
+
+## try it
 
 ```
 cargo build
+cargo run -- run examples/blink.kv
+cargo run -- run examples/counter.kv
+cargo run -- run examples/pattern.kv
+cargo run -- build examples/blink.kv -o firmware.elf
 cargo test
-cargo run -- lex examples/blink.kv
 ```
 
 ## example
