@@ -3,6 +3,7 @@ mod parser;
 mod types;
 mod ir;
 mod codegen;
+mod emu;
 
 use std::process;
 use std::time::Instant;

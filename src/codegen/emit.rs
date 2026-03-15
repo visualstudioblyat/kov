@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 pub struct Emitter {
     pub code: Vec<u8>,
-    labels: HashMap<String, u32>,
+    pub labels: HashMap<String, u32>,
     fixups: Vec<Fixup>,
 }
 
@@ -62,7 +62,12 @@ impl Emitter {
         for fixup in &self.fixups {
             let target_addr = match self.labels.get(&fixup.target) {
                 Some(&addr) => addr,
-                None => continue, // skip unresolved externals (runtime-linked)
+                None => {
+                    // unresolved external → NOP so it doesn't self-loop
+                    let idx = fixup.offset as usize;
+                    self.code[idx..idx + 4].copy_from_slice(&0x00000013u32.to_le_bytes());
+                    continue;
+                }
             };
             let offset = target_addr as i32 - fixup.offset as i32;
             let idx = fixup.offset as usize;
