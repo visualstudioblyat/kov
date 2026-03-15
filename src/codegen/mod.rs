@@ -1,5 +1,6 @@
 pub mod encode;
 pub mod emit;
+pub mod elf;
 
 use std::collections::HashMap;
 use crate::ir::{Function, Value, Block, Op, Terminator};
