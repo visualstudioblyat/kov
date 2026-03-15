@@ -69,9 +69,35 @@ fn cmd_build(args: &[String]) {
         Err(e) => die(&format!("{e}")),
     };
 
+    // find board name from AST
+    let board_name = program.items.iter().find_map(|item| {
+        if let parser::ast::TopItem::Board(b) = item { Some(b.name.clone()) } else { None }
+    });
+
+    // find interrupt handlers from AST
+    let interrupts: Vec<(String, String)> = program.items.iter().filter_map(|item| {
+        if let parser::ast::TopItem::Interrupt(i) = item {
+            Some((i.interrupt_name.clone(), i.fn_name.clone()))
+        } else { None }
+    }).collect();
+
     let ir = ir::lower::Lowering::lower(&program);
 
     let mut cg = codegen::CodeGen::new();
+
+    // emit startup code if we have a board definition
+    let board_config = board_name.as_deref()
+        .and_then(codegen::startup::BoardConfig::from_name);
+
+    if let Some(ref board) = board_config {
+        codegen::startup::emit_startup(&mut cg.emitter, board);
+
+        // emit interrupt wrappers
+        for (_, fn_name) in &interrupts {
+            codegen::startup::emit_interrupt_wrapper(&mut cg.emitter, fn_name);
+        }
+    }
+
     for func in &ir.functions {
         cg.gen_function(func);
     }
@@ -83,10 +109,10 @@ fn cmd_build(args: &[String]) {
 
     let elapsed = start.elapsed();
 
+    let flash_base = board_config.as_ref().map(|b| b.flash_start).unwrap_or(0x0800_0000);
+
     let binary = if output.ends_with(".elf") {
-        // default to GD32VF103 flash base for now
-        let text_base = 0x0800_0000u32;
-        codegen::elf::ElfWriter::new(text_base, text_base).write(&code)
+        codegen::elf::ElfWriter::new(flash_base, flash_base).write(&code)
     } else {
         code.clone()
     };
