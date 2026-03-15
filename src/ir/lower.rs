@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use crate::parser::ast::{self, BinOp, UnaryOp, Stmt, Expr, Program, TopItem};
+use crate::codegen::mmio::{PeripheralMap, MmioValue, resolve_method};
 use super::{Function, Block, Value, Op, Terminator};
 use super::types::IrType;
 
@@ -7,21 +8,31 @@ pub struct Lowering {
     pub functions: Vec<Function>,
 }
 
+// tracks what a variable represents for MMIO resolution
+#[derive(Clone)]
+enum VarKind {
+    Value(Value),
+    Board(String),                      // board variable name
+    PeripheralHandle(String, u32, u32), // (peripheral_name, base_addr, pin_num)
+}
+
 struct FnBuilder<'a> {
     func: &'a mut Function,
     current_block: Block,
-    // variable name → current SSA value
     vars: HashMap<String, Value>,
+    var_kinds: HashMap<String, VarKind>,
+    periph_map: &'a PeripheralMap,
 }
 
 impl Lowering {
     pub fn lower(program: &Program) -> Self {
+        let periph_map = PeripheralMap::from_program(program);
         let mut functions = Vec::new();
 
         for item in &program.items {
             match item {
                 TopItem::Function(f) => {
-                    functions.push(lower_fn(f));
+                    functions.push(lower_fn(f, &periph_map));
                 }
                 TopItem::Interrupt(i) => {
                     // lower interrupt as a regular function (wrapper generated in codegen)
@@ -34,7 +45,7 @@ impl Lowering {
                         body: i.body.clone(),
                         span: i.span,
                     };
-                    functions.push(lower_fn(&fake_fn));
+                    functions.push(lower_fn(&fake_fn, &periph_map));
                 }
                 _ => {} // board, struct, etc handled in type checking
             }
@@ -64,7 +75,7 @@ fn ast_type_to_ir(ty: &Option<ast::Type>) -> IrType {
     }
 }
 
-fn lower_fn(f: &ast::FnDef) -> Function {
+fn lower_fn(f: &ast::FnDef, periph_map: &PeripheralMap) -> Function {
     let params: Vec<(String, IrType)> = f.params.iter()
         .map(|p| (p.name.clone(), ast_type_to_ir(&Some(p.ty.clone()))))
         .collect();
@@ -73,17 +84,30 @@ fn lower_fn(f: &ast::FnDef) -> Function {
     let mut func = Function::new(f.name.clone(), params.clone(), ret_type);
     let entry = func.new_block();
 
-    // bind function parameters as values
     let mut vars = HashMap::new();
+    let mut var_kinds = HashMap::new();
+
     for (name, ty) in &params {
         let val = func.new_value(*ty, Some(name.clone()));
         vars.insert(name.clone(), val);
+        // detect board parameter
+        if let Some(param) = f.params.iter().find(|p| &p.name == name) {
+            if let ast::Type::Ref(inner, true) = &param.ty {
+                if let ast::Type::Named(board_name, _) = inner.as_ref() {
+                    if periph_map.board_name.as_deref() == Some(board_name.as_str()) {
+                        var_kinds.insert(name.clone(), VarKind::Board(board_name.clone()));
+                    }
+                }
+            }
+        }
     }
 
     let mut builder = FnBuilder {
         func: &mut func,
         current_block: entry,
         vars,
+        var_kinds,
+        periph_map,
     };
 
     for stmt in &f.body.stmts {
@@ -103,9 +127,69 @@ impl<'a> FnBuilder<'a> {
         self.func.push_inst(self.current_block, op, ty)
     }
 
+    // detect: b.gpio.pin(N, .output) → PeripheralHandle("gpio", base_addr, N)
+    fn detect_peripheral_handle(&self, expr: &Expr) -> Option<VarKind> {
+        if let Expr::MethodCall(obj, method, args, _) = expr {
+            if method == "pin" || method == "open" {
+                if let Expr::Field(board_expr, periph_name, _) = obj.as_ref() {
+                    if let Expr::Ident(var_name, _) = board_expr.as_ref() {
+                        if let Some(VarKind::Board(_)) = self.var_kinds.get(var_name) {
+                            if let Some(base) = self.periph_map.get_address(periph_name) {
+                                let pin = args.first().and_then(|a| {
+                                    if let Expr::IntLit(n, _) = a { Some(*n as u32) } else { None }
+                                }).unwrap_or(0);
+                                return Some(VarKind::PeripheralHandle(
+                                    periph_name.clone(), base, pin
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    // try to lower a method call as an MMIO operation
+    fn try_lower_mmio(&mut self, obj: &Expr, method: &str, args: &[Expr]) -> Option<Value> {
+        let var_name = match obj {
+            Expr::Ident(name, _) => name,
+            _ => return None,
+        };
+
+        let kind = self.var_kinds.get(var_name)?.clone();
+        if let VarKind::PeripheralHandle(periph, base, pin) = kind {
+            if let Some(ops) = resolve_method(&periph, method, base, Some(pin)) {
+                for op in &ops {
+                    // load address into a register
+                    let addr = self.emit(Op::ConstI32(op.address as i32), IrType::Ptr);
+                    match &op.value {
+                        MmioValue::Constant(v) => {
+                            let val = self.emit(Op::ConstI32(*v as i32), IrType::I32);
+                            self.emit(Op::VolatileStore(addr, val), IrType::Void);
+                        }
+                        MmioValue::Register(_) => {
+                            // value comes from a function argument
+                            if let Some(arg) = args.first() {
+                                let val = self.lower_expr(arg);
+                                self.emit(Op::VolatileStore(addr, val), IrType::Void);
+                            }
+                        }
+                    }
+                }
+                return Some(self.emit(Op::Nop, IrType::Void));
+            }
+        }
+        None
+    }
+
     fn lower_stmt(&mut self, stmt: &Stmt) {
         match stmt {
             Stmt::Let { name, value, ty, .. } => {
+                // detect peripheral handle creation: b.gpio.pin(N, ...)
+                if let Some(kind) = self.detect_peripheral_handle(value) {
+                    self.var_kinds.insert(name.clone(), kind);
+                }
                 let val = self.lower_expr(value);
                 self.vars.insert(name.clone(), val);
             }
@@ -337,10 +421,12 @@ impl<'a> FnBuilder<'a> {
             }
 
             Expr::MethodCall(obj, method, args, _) => {
+                // check if this is a peripheral method → emit MMIO
+                if let Some(mmio_result) = self.try_lower_mmio(obj, method, args) {
+                    return mmio_result;
+                }
                 let _obj_val = self.lower_expr(obj);
                 let arg_vals: Vec<Value> = args.iter().map(|a| self.lower_expr(a)).collect();
-                // desugar: obj.method(args) → method(obj, args)
-                // for now just emit as a named call
                 self.emit(Op::Call(method.clone(), arg_vals), IrType::Void)
             }
 
