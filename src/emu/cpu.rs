@@ -52,6 +52,16 @@ impl Cpu {
         }
     }
 
+    pub fn with_memory(entry: u32, flash_base: u32, ram_base: u32) -> Self {
+        Self {
+            regs: [0u32; 32],
+            pc: entry,
+            mem: Memory::with_bases(flash_base, ram_base),
+            halted: false,
+            cycles: 0,
+        }
+    }
+
     fn reg(&self, r: usize) -> u32 { self.regs[r] }
 
     fn set_reg(&mut self, r: usize, val: u32) {

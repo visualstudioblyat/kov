@@ -12,9 +12,9 @@ pub const MMIO_SIZE: u32 = 0x4000_0000;
 pub struct Memory {
     ram: Vec<u8>,
     flash: Vec<u8>,
-    // MMIO log — every write to peripheral space is recorded
+    pub flash_base: u32,
+    pub ram_base: u32,
     pub mmio_log: Vec<MmioAccess>,
-    // MMIO shadow — last value written to each address
     mmio_shadow: HashMap<u32, u32>,
 }
 
@@ -28,9 +28,15 @@ pub struct MmioAccess {
 
 impl Memory {
     pub fn new() -> Self {
+        Self::with_bases(FLASH_BASE, RAM_BASE)
+    }
+
+    pub fn with_bases(flash_base: u32, ram_base: u32) -> Self {
         Self {
             ram: vec![0u8; RAM_SIZE as usize],
             flash: vec![0u8; FLASH_SIZE as usize],
+            flash_base,
+            ram_base,
             mmio_log: Vec::new(),
             mmio_shadow: HashMap::new(),
         }
@@ -108,22 +114,22 @@ impl Memory {
     }
 
     fn flash_offset(&self, addr: u32) -> Option<usize> {
-        if addr >= FLASH_BASE && addr < FLASH_BASE + FLASH_SIZE {
-            Some((addr - FLASH_BASE) as usize)
+        if addr >= self.flash_base && addr < self.flash_base + FLASH_SIZE {
+            Some((addr - self.flash_base) as usize)
         } else {
             None
         }
     }
 
     fn ram_offset(&self, addr: u32) -> Option<usize> {
-        if addr >= RAM_BASE && addr < RAM_BASE + RAM_SIZE {
-            Some((addr - RAM_BASE) as usize)
+        if addr >= self.ram_base && addr < self.ram_base + RAM_SIZE {
+            Some((addr - self.ram_base) as usize)
         } else {
             None
         }
     }
 
     fn is_mmio(&self, addr: u32) -> bool {
-        addr >= MMIO_BASE
+        addr >= MMIO_BASE || addr >= 0x6000_0000
     }
 }
