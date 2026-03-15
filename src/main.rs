@@ -1,5 +1,6 @@
 mod lexer;
 mod parser;
+mod types;
 mod ir;
 mod codegen;
 
@@ -68,6 +69,13 @@ fn cmd_build(args: &[String]) {
         Ok(p) => p,
         Err(e) => die(&format!("{e}")),
     };
+
+    if let Err(errors) = types::check::TypeChecker::new().check(&program) {
+        for e in &errors {
+            eprintln!("error: {e}");
+        }
+        die(&format!("{} type error(s)", errors.len()));
+    }
 
     // find board name from AST
     let board_name = program.items.iter().find_map(|item| {
