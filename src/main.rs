@@ -64,8 +64,8 @@ fn compile(source: &str) -> CompileResult {
     match types::check::TypeChecker::new().check(&program) {
         Ok(warnings) => {
             for w in &warnings {
-                eprint!(
-                    "warning: {}\n",
+                eprintln!(
+                    "warning: {}",
                     errors::format_error(source, w.span, &w.message)
                 );
             }
