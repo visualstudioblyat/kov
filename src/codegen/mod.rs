@@ -77,6 +77,12 @@ impl CodeGen {
                 global_addrs.insert(g.name.clone(), ram_base + offset);
             }
         }
+        // also register string labels
+        for (label, _) in &globals.strings {
+            if let Some(offset) = globals.offset_of(label) {
+                global_addrs.insert(label.clone(), ram_base + offset);
+            }
+        }
         Self {
             emitter: Emitter::new(),
             ram_base,

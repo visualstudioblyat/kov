@@ -88,6 +88,18 @@ impl Lowering {
             }
         }
 
+        // collect string literals from all function bodies
+        for item in &program.items {
+            let body = match item {
+                TopItem::Function(f) => Some(&f.body),
+                TopItem::Interrupt(i) => Some(&i.body),
+                _ => None,
+            };
+            if let Some(body) = body {
+                collect_strings(&body.stmts, &mut globals);
+            }
+        }
+
         // second pass: lower functions (including statics inside interrupt bodies)
         for item in &program.items {
             match item {
@@ -139,6 +151,60 @@ fn ast_type_to_ir(ty: &Option<ast::Type>) -> IrType {
             // named types, arrays etc → i32 for now (full type resolution later)
             _ => IrType::I32,
         },
+    }
+}
+
+// recursively collect string literals from statements and add them to globals
+fn collect_strings(stmts: &[Stmt], globals: &mut super::globals::GlobalTable) {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Expr(expr) | Stmt::Return(Some(expr), _) => collect_strings_expr(expr, globals),
+            Stmt::Let { value, .. } => collect_strings_expr(value, globals),
+            Stmt::Assign { value, .. } => collect_strings_expr(value, globals),
+            Stmt::If {
+                condition,
+                then_block,
+                else_block,
+                ..
+            } => {
+                collect_strings_expr(condition, globals);
+                collect_strings(&then_block.stmts, globals);
+                if let Some(eb) = else_block {
+                    match eb {
+                        ast::ElseBranch::Else(b) => collect_strings(&b.stmts, globals),
+                        ast::ElseBranch::ElseIf(s) => collect_strings(&[*s.clone()], globals),
+                    }
+                }
+            }
+            Stmt::Loop(body, _) => collect_strings(&body.stmts, globals),
+            Stmt::While { body, .. } => collect_strings(&body.stmts, globals),
+            Stmt::For { body, .. } => collect_strings(&body.stmts, globals),
+            _ => {}
+        }
+    }
+}
+
+fn collect_strings_expr(expr: &Expr, globals: &mut super::globals::GlobalTable) {
+    match expr {
+        Expr::StringLit(s, _) => {
+            globals.add_string(s.as_bytes());
+        }
+        Expr::Call(_, args, _) => {
+            for a in args {
+                collect_strings_expr(a, globals);
+            }
+        }
+        Expr::MethodCall(obj, _, args, _) => {
+            collect_strings_expr(obj, globals);
+            for a in args {
+                collect_strings_expr(a, globals);
+            }
+        }
+        Expr::Binary(l, _, r, _) => {
+            collect_strings_expr(l, globals);
+            collect_strings_expr(r, globals);
+        }
+        _ => {}
     }
 }
 
@@ -749,9 +815,16 @@ impl<'a> FnBuilder<'a> {
                 base
             }
 
-            Expr::StringLit(_, _) => {
-                // strings become global data + pointer
-                self.emit(Op::ConstI32(0), IrType::Ptr) // placeholder
+            Expr::StringLit(s, _) => {
+                // find the string's label in the global table
+                let label = self
+                    .globals
+                    .strings
+                    .iter()
+                    .find(|(_, data)| data == s.as_bytes())
+                    .map(|(l, _)| l.clone())
+                    .unwrap_or_else(|| ".str0".into());
+                self.emit(Op::GlobalAddr(label), IrType::Ptr)
             }
 
             Expr::StructLit(name, fields, _) => {
@@ -777,8 +850,40 @@ impl<'a> FnBuilder<'a> {
                 }
             }
 
+            Expr::ArrayLit(elements, _) => {
+                if elements.is_empty() {
+                    return self.emit(Op::Nop, IrType::Void);
+                }
+                // allocate stack space: 4 bytes per element (assume u32 for now)
+                let elem_size = 4u32;
+                let total = elem_size * elements.len() as u32;
+                let base = self.emit(Op::StackAlloc(total), IrType::Ptr);
+                for (i, elem) in elements.iter().enumerate() {
+                    let val = self.lower_expr(elem);
+                    if i == 0 {
+                        self.emit(Op::Store(base, val), IrType::Void);
+                    } else {
+                        let off =
+                            self.emit(Op::ConstI32((i as u32 * elem_size) as i32), IrType::I32);
+                        let addr = self.emit(Op::Add(base, off), IrType::Ptr);
+                        self.emit(Op::Store(addr, val), IrType::Void);
+                    }
+                }
+                base
+            }
+
+            Expr::Index(array, index, _) => {
+                let base = self.lower_expr(array);
+                let idx = self.lower_expr(index);
+                let elem_size = 4u32; // assume u32 elements
+                let size = self.emit(Op::ConstI32(elem_size as i32), IrType::I32);
+                let offset = self.emit(Op::Mul(idx, size), IrType::I32);
+                let addr = self.emit(Op::Add(base, offset), IrType::Ptr);
+                self.emit(Op::Load(addr, IrType::I32), IrType::I32)
+            }
+
             _ => {
-                // DotEnum, ArrayLit, etc — TODO
+                // DotEnum, Cast, etc — TODO
                 self.emit(Op::Nop, IrType::Void)
             }
         }
@@ -1019,5 +1124,55 @@ mod tests {
         assert_eq!(layout.field_offset("b"), Some((4, IrType::I32)));
         assert_eq!(layout.field_offset("c"), Some((8, IrType::I16)));
         assert_eq!(layout.size, 12); // 10 rounded to 4
+    }
+
+    #[test]
+    fn lower_array_lit_and_index() {
+        let ir = lower("fn f() u32 { let arr = [10, 20, 30]; return arr[1]; }");
+        let func = &ir.functions[0];
+        // should have StackAlloc for the array
+        let has_alloc = func
+            .blocks
+            .iter()
+            .any(|b| b.insts.iter().any(|i| matches!(&i.op, Op::StackAlloc(_))));
+        assert!(has_alloc, "array literal should emit StackAlloc");
+        // should have Stores for each element
+        let store_count = func
+            .blocks
+            .iter()
+            .flat_map(|b| b.insts.iter())
+            .filter(|i| matches!(&i.op, Op::Store(_, _)))
+            .count();
+        assert!(
+            store_count >= 3,
+            "should store 3 elements, got {}",
+            store_count
+        );
+        // should have Mul for index offset calculation
+        let has_mul = func
+            .blocks
+            .iter()
+            .any(|b| b.insts.iter().any(|i| matches!(&i.op, Op::Mul(_, _))));
+        assert!(has_mul, "index should emit Mul for offset");
+        println!("{}", func);
+    }
+
+    #[test]
+    fn lower_string_literal() {
+        let ir = lower("fn f() { let s = \"hello\"; }");
+        // string should be collected into globals
+        assert!(
+            !ir.globals.strings.is_empty(),
+            "string literal should be in global table"
+        );
+        assert_eq!(ir.globals.strings[0].1, b"hello");
+        // function should emit GlobalAddr for the string
+        let func = &ir.functions[0];
+        let has_global_addr = func
+            .blocks
+            .iter()
+            .any(|b| b.insts.iter().any(|i| matches!(&i.op, Op::GlobalAddr(_))));
+        assert!(has_global_addr, "string should emit GlobalAddr");
+        println!("{}", func);
     }
 }
