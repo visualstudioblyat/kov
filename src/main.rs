@@ -26,6 +26,7 @@ fn main() {
         eprintln!("  build <file.kv> [-o output]   compile to binary");
         eprintln!("  run <file.kv> [-c cycles]     compile and execute");
         eprintln!("  trace <file.kv> [-c cycles]   compile, execute, output JSON trace");
+        eprintln!("  wcet <file.kv>                worst-case execution time analysis");
         eprintln!("  check <file.kv>               type check only");
         eprintln!("  lex <file.kv>                 dump tokens");
         eprintln!();
@@ -39,6 +40,7 @@ fn main() {
         "build" => cmd_build(&args),
         "run" => cmd_run(&args),
         "trace" => cmd_trace(&args),
+        "wcet" => cmd_wcet(&args),
         "check" => cmd_check(&args),
         _ => {
             eprintln!("unknown command: {}", args[1]);
@@ -316,6 +318,35 @@ fn cmd_trace(args: &[String]) {
     if let Some(trace) = &cpu.trace {
         println!("{}", trace.to_json());
     }
+}
+
+fn cmd_wcet(args: &[String]) {
+    if args.len() < 3 {
+        eprintln!("usage: kov wcet <file.kv>");
+        process::exit(1);
+    }
+
+    let source = read_file(&args[2]);
+    let result = compile(&source);
+
+    let mut ir = ir::lower::Lowering::lower(
+        &parser::Parser::new(lexer::Lexer::tokenize(&source).unwrap())
+            .parse()
+            .unwrap(),
+    );
+    for func in &mut ir.functions {
+        ir::opt::optimize(func);
+    }
+
+    let results: Vec<_> = ir
+        .functions
+        .iter()
+        .map(|f| codegen::wcet::analyze(f, None))
+        .collect();
+
+    eprintln!("  wcet analysis ({} functions):", results.len());
+    eprint!("{}", codegen::wcet::format_report(&results));
+    let _ = result; // ensure compilation succeeded
 }
 
 fn cmd_check(args: &[String]) {

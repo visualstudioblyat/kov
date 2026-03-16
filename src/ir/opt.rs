@@ -506,6 +506,70 @@ fn sub1(v: Value, from: Value, to: Value) -> Value {
     if v == from { to } else { v }
 }
 
+// copy propagation: if v = copy(x), replace all uses of v with x
+pub fn copy_propagation(func: &mut Function) {
+    let mut copies: std::collections::HashMap<u32, Value> = std::collections::HashMap::new();
+
+    for block in &func.blocks {
+        for inst in &block.insts {
+            match &inst.op {
+                Op::Zext(v, _) | Op::Sext(v, _) | Op::Trunc(v, _) => {
+                    copies.insert(inst.result.0, *v);
+                }
+                // addi rd, rs, 0 pattern shows up as Add(v, const_0)
+                Op::Add(a, b) => {
+                    if let Some(0) = const_val_from(func, *b) {
+                        copies.insert(inst.result.0, *a);
+                    } else if let Some(0) = const_val_from(func, *a) {
+                        copies.insert(inst.result.0, *b);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    if copies.is_empty() {
+        return;
+    }
+
+    // chase copy chains: if v1 → v2 → v3, resolve v1 → v3
+    let mut resolved: std::collections::HashMap<u32, Value> = std::collections::HashMap::new();
+    for (&from, &to) in &copies {
+        let mut target = to;
+        let mut depth = 0;
+        while let Some(&next) = copies.get(&target.0) {
+            target = next;
+            depth += 1;
+            if depth > 32 {
+                break;
+            }
+        }
+        resolved.insert(from, target);
+    }
+
+    for block in &mut func.blocks {
+        for inst in &mut block.insts {
+            inst.op = rewrite_op(&inst.op, &resolved);
+        }
+        rewrite_terminator(&mut block.terminator, &resolved);
+    }
+}
+
+fn const_val_from(func: &Function, val: Value) -> Option<i32> {
+    for block in &func.blocks {
+        for inst in &block.insts {
+            if inst.result == val {
+                if let Op::ConstI32(v) = inst.op {
+                    return Some(v);
+                }
+                return None;
+            }
+        }
+    }
+    None
+}
+
 // tail call optimization: if a block's last instruction is Call and terminator is Return of that call's result, convert to a TailCall
 pub fn tail_call_opt(func: &mut Function) {
     for block in &mut func.blocks {
@@ -526,11 +590,10 @@ pub fn tail_call_opt(func: &mut Function) {
 
 // run all optimizations (two passes for propagation effects)
 pub fn optimize(func: &mut Function) {
-    // pass 1
     constant_fold(func);
     strength_reduce(func);
     cse(func);
-    // pass 2
+    copy_propagation(func);
     constant_fold(func);
     dead_code_elimination(func);
     tail_call_opt(func);

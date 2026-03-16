@@ -4,6 +4,7 @@ pub mod emit;
 pub mod encode;
 pub mod mmio;
 pub mod startup;
+pub mod wcet;
 
 use crate::ir::globals::GlobalTable;
 use crate::ir::{Function, Op, Terminator, Value};
