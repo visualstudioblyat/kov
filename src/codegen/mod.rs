@@ -20,11 +20,13 @@ pub struct CodeGen {
 const S_REGS: &[u32] = &[S0, S1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27];
 
 struct RegAlloc {
-    map: HashMap<u32, u32>,
+    map: HashMap<u32, u32>, // Value.0 → register
     next: usize,
-    used_s_regs: Vec<u32>, // callee-saved registers actually used
-    spill_offset: i32,
-    spill_slots: HashMap<u32, i32>, // Value.0 → stack offset from SP
+    used_s_regs: Vec<u32>,          // callee-saved registers actually used
+    spill_count: i32,               // number of spilled values
+    spill_slots: HashMap<u32, i32>, // Value.0 → spill slot index
+    pending_spills: Vec<(u32, u32, i32)>, // (old_val_id, register, slot_offset) to emit SW
+    pending_loads: Vec<(u32, i32)>, // (register, slot_offset) to emit LW before use
 }
 
 // allocatable registers in priority order: temporaries first, then callee-saved
@@ -38,28 +40,52 @@ impl RegAlloc {
             map: HashMap::new(),
             next: 0,
             used_s_regs: Vec::new(),
-            spill_offset: 0,
+            spill_count: 0,
             spill_slots: HashMap::new(),
+            pending_spills: Vec::new(),
+            pending_loads: Vec::new(),
         }
     }
 
     fn get(&mut self, val: Value) -> u32 {
         if let Some(&reg) = self.map.get(&val.0) {
+            // check if this value was spilled — need to reload it
+            if let Some(&slot) = self.spill_slots.get(&val.0) {
+                self.pending_loads.push((reg, slot));
+            }
             return reg;
         }
         if self.next < REGS.len() {
             let reg = REGS[self.next];
             self.next += 1;
             self.map.insert(val.0, reg);
-            // track callee-saved register usage
             if S_REGS.contains(&reg) && !self.used_s_regs.contains(&reg) {
                 self.used_s_regs.push(reg);
             }
             reg
         } else {
-            // spill: assign a stack slot and reuse T0
-            // the caller must emit load/store around usage
-            T0
+            // all registers exhausted — evict oldest mapped value to stack
+            // find the first mapped value that isn't a spill candidate already
+            let evict_val = self
+                .map
+                .iter()
+                .find(|&(_, &r)| r != T0 && r != T1) // don't evict scratch regs
+                .map(|(&v, &r)| (v, r));
+
+            if let Some((evict_id, evict_reg)) = evict_val {
+                // assign spill slot
+                let slot = self.spill_count;
+                self.spill_count += 1;
+                self.spill_slots.insert(evict_id, slot);
+                self.pending_spills.push((evict_id, evict_reg, slot));
+
+                // give evicted register to new value
+                self.map.remove(&evict_id);
+                self.map.insert(val.0, evict_reg);
+                evict_reg
+            } else {
+                T0 // absolute fallback
+            }
         }
     }
 
@@ -67,11 +93,17 @@ impl RegAlloc {
         self.map.insert(val.0, reg);
     }
 
-    // compute frame size: RA + used s-regs, aligned to 16
+    // compute frame size: RA + used s-regs + spill slots, aligned to 16
     fn frame_size(&self) -> i32 {
-        // RA + each used s-reg = (1 + used_s_regs.len()) * 4, aligned to 16
-        let slots = 1 + self.used_s_regs.len() as i32; // RA + s-regs
-        ((slots * 4) + 15) & !15
+        let save_slots = 1 + self.used_s_regs.len() as i32; // RA + s-regs
+        let total_slots = save_slots + self.spill_count;
+        ((total_slots * 4) + 15) & !15
+    }
+
+    // offset from SP for a spill slot (after save area)
+    fn spill_offset(&self, slot: i32) -> i32 {
+        // spill slots start after the save area at the bottom of the frame
+        slot * 4
     }
 }
 
@@ -130,10 +162,16 @@ impl CodeGen {
 
             for inst in &block.insts {
                 let rd = ra.get(inst.result);
+                // emit any pending spill stores
+                self.flush_spills(&mut ra);
                 self.gen_inst(rd, &inst.op, &mut ra);
+                // emit any pending reload loads
+                self.flush_loads(&mut ra);
             }
 
+            self.flush_spills(&mut ra);
             self.gen_terminator(&block.terminator, &func.name, &mut ra);
+            self.flush_loads(&mut ra);
         }
 
         // swap back — body_emitter now has the body code
@@ -179,6 +217,22 @@ impl CodeGen {
         }
         self.emitter.emit32(addi(SP, SP, frame));
         self.emitter.emit32(ret());
+    }
+
+    fn flush_spills(&mut self, ra: &mut RegAlloc) {
+        let spills: Vec<_> = ra.pending_spills.drain(..).collect();
+        for (_val_id, reg, slot) in spills {
+            let offset = ra.spill_offset(slot);
+            self.emitter.emit32(sw(SP, reg, offset));
+        }
+    }
+
+    fn flush_loads(&mut self, ra: &mut RegAlloc) {
+        let loads: Vec<_> = ra.pending_loads.drain(..).collect();
+        for (reg, slot) in loads {
+            let offset = ra.spill_offset(slot);
+            self.emitter.emit32(lw(reg, SP, offset));
+        }
     }
 
     fn gen_inst(&mut self, rd: u32, op: &Op, ra: &mut RegAlloc) {
@@ -529,5 +583,22 @@ mod tests {
             0x13,
             "first instruction should be ADDI (sp adjust)"
         );
+    }
+
+    #[test]
+    fn codegen_spill() {
+        // force enough live values to exhaust all 22 registers and trigger spilling
+        let code = compile(
+            "fn f(a: u32, b: u32) u32 {
+                let v0 = a + 1; let v1 = b + 2; let v2 = v0 + v1;
+                let v3 = v2 + 3; let v4 = v3 + 4; let v5 = v4 + 5;
+                let v6 = v5 + 6; let v7 = v6 + 7; let v8 = v7 + 8;
+                let v9 = v8 + 9; let v10 = v9 + 10; let v11 = v10 + 11;
+                let v12 = v11 + 12; let v13 = v12 + 13; let v14 = v13 + 14;
+                return v0 + v1 + v2 + v3 + v4 + v5 + v6 + v7 + v8 + v9 + v10 + v11 + v12 + v13 + v14;
+            }",
+        );
+        assert!(!code.is_empty());
+        assert_eq!(code.len() % 4, 0);
     }
 }
