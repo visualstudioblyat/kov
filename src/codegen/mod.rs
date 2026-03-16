@@ -1,3 +1,4 @@
+pub mod compress;
 pub mod elf;
 pub mod emit;
 pub mod encode;

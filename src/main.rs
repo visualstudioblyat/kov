@@ -1,5 +1,10 @@
 #![allow(dead_code)]
-#![allow(clippy::enum_variant_names, clippy::collapsible_if, clippy::type_complexity, clippy::ptr_arg)]
+#![allow(
+    clippy::enum_variant_names,
+    clippy::collapsible_if,
+    clippy::type_complexity,
+    clippy::ptr_arg
+)]
 
 mod codegen;
 mod emu;
@@ -41,7 +46,8 @@ fn main() {
 }
 
 struct CompileResult {
-    code: Vec<u8>,
+    code: Vec<u8>,       // uncompressed (for emulator)
+    compressed: Vec<u8>, // RV32C compressed (for output)
     flash_base: u32,
     ram_base: u32,
     ram_top: u32,
@@ -134,9 +140,11 @@ fn compile(source: &str) -> CompileResult {
         Ok(c) => c,
         Err(e) => die(&format!("codegen error: {e}")),
     };
+    let compressed = codegen::compress::compress(&code);
 
     CompileResult {
         code,
+        compressed,
         flash_base: board_config
             .as_ref()
             .map(|b| b.flash_start)
@@ -182,9 +190,9 @@ fn cmd_build(args: &[String]) {
     let result = compile(&source);
 
     let binary = if output.ends_with(".elf") {
-        codegen::elf::ElfWriter::new(result.flash_base, result.flash_base).write(&result.code)
+        codegen::elf::ElfWriter::new(result.flash_base, result.flash_base).write(&result.compressed)
     } else {
-        result.code.clone()
+        result.compressed.clone()
     };
 
     if let Err(e) = std::fs::write(&output, &binary) {
@@ -197,7 +205,11 @@ fn cmd_build(args: &[String]) {
         output,
         binary.len()
     );
-    eprintln!("  code:     {} bytes", result.code.len());
+    eprintln!(
+        "  code:     {} bytes ({} uncompressed)",
+        result.compressed.len(),
+        result.code.len()
+    );
     eprintln!("  time:     {:.1}ms", result.elapsed.as_secs_f64() * 1000.0);
 }
 
@@ -216,8 +228,9 @@ fn cmd_run(args: &[String]) {
     let result = compile(&source);
 
     eprintln!(
-        "  compiled: {} bytes in {:.1}ms",
+        "  compiled: {} bytes ({} compressed) in {:.1}ms",
         result.code.len(),
+        result.compressed.len(),
         result.elapsed.as_secs_f64() * 1000.0
     );
 
