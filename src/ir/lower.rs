@@ -59,7 +59,7 @@ struct FnBuilder<'a> {
     periph_map: &'a PeripheralMap,
     globals: &'a super::globals::GlobalTable,
     struct_layouts: &'a HashMap<String, StructLayout>,
-    loop_stack: Vec<(Block, Block)>, // (header/continue_target, exit_block)
+    loop_stack: Vec<(Option<String>, Block, Block)>, // (label, header/continue_target, exit_block)
 }
 
 impl Lowering {
@@ -176,7 +176,7 @@ fn collect_strings(stmts: &[Stmt], globals: &mut super::globals::GlobalTable) {
                     }
                 }
             }
-            Stmt::Loop(body, _) => collect_strings(&body.stmts, globals),
+            Stmt::Loop(_, body, _) => collect_strings(&body.stmts, globals),
             Stmt::While { body, .. } => collect_strings(&body.stmts, globals),
             Stmt::For { body, .. } => collect_strings(&body.stmts, globals),
             _ => {}
@@ -480,7 +480,7 @@ impl<'a> FnBuilder<'a> {
                 self.current_block = merge_bb;
             }
 
-            Stmt::Loop(body, _) => {
+            Stmt::Loop(label, body, _) => {
                 let loop_bb = self.func.new_block();
                 let exit_bb = self.func.new_block();
 
@@ -488,7 +488,7 @@ impl<'a> FnBuilder<'a> {
                     .set_terminator(self.current_block, Terminator::Jump(loop_bb, vec![]));
                 self.current_block = loop_bb;
 
-                self.loop_stack.push((loop_bb, exit_bb));
+                self.loop_stack.push((label.clone(), loop_bb, exit_bb));
                 for s in &body.stmts {
                     self.lower_stmt(s);
                 }
@@ -507,7 +507,10 @@ impl<'a> FnBuilder<'a> {
             }
 
             Stmt::While {
-                condition, body, ..
+                label,
+                condition,
+                body,
+                ..
             } => {
                 let cond_bb = self.func.new_block();
                 let body_bb = self.func.new_block();
@@ -530,7 +533,7 @@ impl<'a> FnBuilder<'a> {
                 );
 
                 self.current_block = body_bb;
-                self.loop_stack.push((cond_bb, exit_bb));
+                self.loop_stack.push((label.clone(), cond_bb, exit_bb));
                 for s in &body.stmts {
                     self.lower_stmt(s);
                 }
@@ -547,6 +550,7 @@ impl<'a> FnBuilder<'a> {
             }
 
             Stmt::For {
+                label,
                 var,
                 start,
                 end,
@@ -584,7 +588,7 @@ impl<'a> FnBuilder<'a> {
 
                 // body
                 self.current_block = body_bb;
-                self.loop_stack.push((header_bb, exit_bb));
+                self.loop_stack.push((label.clone(), header_bb, exit_bb));
                 for s in &body.stmts {
                     self.lower_stmt(s);
                 }
@@ -605,16 +609,34 @@ impl<'a> FnBuilder<'a> {
                 self.current_block = exit_bb;
             }
 
-            Stmt::Break(_) => {
-                if let Some(&(_, exit_bb)) = self.loop_stack.last() {
+            Stmt::Break(label, _) => {
+                let target = if let Some(lbl) = label {
+                    self.loop_stack
+                        .iter()
+                        .rev()
+                        .find(|(l, _, _)| l.as_deref() == Some(lbl.as_str()))
+                        .map(|&(_, _, exit_bb)| exit_bb)
+                } else {
+                    self.loop_stack.last().map(|&(_, _, exit_bb)| exit_bb)
+                };
+                if let Some(exit_bb) = target {
                     self.func
                         .set_terminator(self.current_block, Terminator::Jump(exit_bb, vec![]));
                     self.current_block = self.func.new_block();
                 }
             }
 
-            Stmt::Continue(_) => {
-                if let Some(&(header_bb, _)) = self.loop_stack.last() {
+            Stmt::Continue(label, _) => {
+                let target = if let Some(lbl) = label {
+                    self.loop_stack
+                        .iter()
+                        .rev()
+                        .find(|(l, _, _)| l.as_deref() == Some(lbl.as_str()))
+                        .map(|&(_, header_bb, _)| header_bb)
+                } else {
+                    self.loop_stack.last().map(|&(_, header_bb, _)| header_bb)
+                };
+                if let Some(header_bb) = target {
                     self.func
                         .set_terminator(self.current_block, Terminator::Jump(header_bb, vec![]));
                     self.current_block = self.func.new_block();
@@ -1226,6 +1248,19 @@ mod tests {
         assert!(
             has_return_error,
             "try should emit ReturnError for error propagation"
+        );
+        println!("{}", func);
+    }
+
+    #[test]
+    fn lower_labeled_break() {
+        let ir = lower("fn f() { 'outer: loop { loop { break 'outer; } } }");
+        let func = &ir.functions[0];
+        // the inner break should jump to outer's exit, not inner's exit
+        // should have at least 4 blocks: entry, outer_loop, inner_loop, outer_exit
+        assert!(
+            func.blocks.len() >= 4,
+            "labeled break needs outer+inner loops + exit"
         );
         println!("{}", func);
     }

@@ -684,21 +684,55 @@ impl Parser {
             TokenKind::Break => {
                 let s = self.span();
                 self.advance();
+                let label = if let TokenKind::Lifetime(name) = self.peek() {
+                    let name = name.clone();
+                    self.advance();
+                    Some(name)
+                } else {
+                    None
+                };
                 self.expect(&TokenKind::Semicolon)?;
-                Ok(Stmt::Break(s))
+                Ok(Stmt::Break(label, s))
             }
             TokenKind::Continue => {
                 let s = self.span();
                 self.advance();
+                let label = if let TokenKind::Lifetime(name) = self.peek() {
+                    let name = name.clone();
+                    self.advance();
+                    Some(name)
+                } else {
+                    None
+                };
                 self.expect(&TokenKind::Semicolon)?;
-                Ok(Stmt::Continue(s))
+                Ok(Stmt::Continue(label, s))
             }
             TokenKind::If => self.parse_if(),
+            TokenKind::Lifetime(_) => {
+                let label = if let TokenKind::Lifetime(name) = self.peek() {
+                    name.clone()
+                } else {
+                    unreachable!()
+                };
+                let s = self.span();
+                self.advance();
+                self.expect(&TokenKind::Colon)?;
+                match self.peek() {
+                    TokenKind::Loop => {
+                        self.advance();
+                        let b = self.parse_block()?;
+                        Ok(Stmt::Loop(Some(label), b, s))
+                    }
+                    TokenKind::While => self.parse_while_with_label(Some(label), s),
+                    TokenKind::For => self.parse_for_with_label(Some(label), s),
+                    _ => Err(self.error("expected loop, while, or for after label".to_string())),
+                }
+            }
             TokenKind::Loop => {
                 let s = self.span();
                 self.advance();
                 let b = self.parse_block()?;
-                Ok(Stmt::Loop(b, s))
+                Ok(Stmt::Loop(None, b, s))
             }
             TokenKind::While => self.parse_while(),
             TokenKind::For => self.parse_for(),
@@ -800,11 +834,15 @@ impl Parser {
     }
 
     fn parse_while(&mut self) -> R<Stmt> {
-        let start = self.span();
+        self.parse_while_with_label(None, self.span())
+    }
+
+    fn parse_while_with_label(&mut self, label: Option<String>, start: Span) -> R<Stmt> {
         self.advance(); // while
         let condition = self.parse_expr()?;
         let body = self.parse_block()?;
         Ok(Stmt::While {
+            label,
             condition,
             body,
             span: start,
@@ -812,7 +850,10 @@ impl Parser {
     }
 
     fn parse_for(&mut self) -> R<Stmt> {
-        let start = self.span();
+        self.parse_for_with_label(None, self.span())
+    }
+
+    fn parse_for_with_label(&mut self, label: Option<String>, start: Span) -> R<Stmt> {
         self.advance(); // for
         let var = self.expect_ident()?;
         self.expect(&TokenKind::In)?;
@@ -836,6 +877,7 @@ impl Parser {
 
         let body = self.parse_block()?;
         Ok(Stmt::For {
+            label,
             var,
             start: range_start,
             end: range_end,

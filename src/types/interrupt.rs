@@ -125,7 +125,7 @@ fn collect_globals_in_stmt(stmt: &Stmt, globals: &mut HashSet<String>) {
                 }
             }
         }
-        Stmt::Loop(body, _) => collect_globals_in_block(body, globals),
+        Stmt::Loop(_, body, _) => collect_globals_in_block(body, globals),
         Stmt::While { body, .. } => collect_globals_in_block(body, globals),
         Stmt::For { body, .. } => collect_globals_in_block(body, globals),
         Stmt::Match { expr, arms, .. } => {

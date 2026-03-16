@@ -209,8 +209,8 @@ pub enum Stmt {
     },
     Expr(Expr),
     Return(Option<Expr>, Span),
-    Break(Span),
-    Continue(Span),
+    Break(Option<String>, Span),
+    Continue(Option<String>, Span),
     Defer(Box<Stmt>, Span),
     If {
         condition: Expr,
@@ -218,13 +218,15 @@ pub enum Stmt {
         else_block: Option<ElseBranch>,
         span: Span,
     },
-    Loop(Block, Span),
+    Loop(Option<String>, Block, Span),
     While {
+        label: Option<String>,
         condition: Expr,
         body: Block,
         span: Span,
     },
     For {
+        label: Option<String>,
         var: String,
         start: Expr,
         end: Expr,

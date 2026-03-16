@@ -241,6 +241,7 @@ impl TypeChecker {
                 condition,
                 body,
                 span,
+                label: _,
             } => {
                 let cond_ty = self.check_expr(condition, scope);
                 if cond_ty != Ty::Bool && cond_ty != Ty::Unknown {
@@ -252,7 +253,7 @@ impl TypeChecker {
                 self.check_block(body, scope);
             }
 
-            Stmt::Loop(body, _) => self.check_block(body, scope),
+            Stmt::Loop(_, body, _) => self.check_block(body, scope),
 
             Stmt::For {
                 var,
@@ -276,10 +277,11 @@ impl TypeChecker {
             Stmt::Match { expr, arms, span } => {
                 let scrutinee_ty = self.check_expr(expr, scope);
                 let mut has_wildcard = false;
+                let mut covered_variants: HashSet<String> = HashSet::new();
                 for arm in arms {
                     match &arm.pattern {
                         Pattern::Wildcard => has_wildcard = true,
-                        Pattern::Ident(_) => has_wildcard = true, // binding catches all
+                        Pattern::Ident(_) => has_wildcard = true,
                         Pattern::IntLit(_) => {
                             if scrutinee_ty != Ty::Unknown && !scrutinee_ty.is_integer() {
                                 self.err(
@@ -291,15 +293,60 @@ impl TypeChecker {
                                 );
                             }
                         }
-                        Pattern::Variant(_, _) => {} // TODO: enum variant checking
+                        Pattern::Variant(name, _) => {
+                            // check variant exists in the enum
+                            if let Ty::Named(enum_name) = &scrutinee_ty {
+                                if let Some(variants) = self.enums.get(enum_name) {
+                                    if !variants.contains(name) {
+                                        self.err(
+                                            arm.span,
+                                            format!(
+                                                "unknown variant '{}' for enum {}",
+                                                name, enum_name
+                                            ),
+                                        );
+                                    } else {
+                                        covered_variants.insert(name.clone());
+                                    }
+                                }
+                            }
+                        }
                     }
                     self.check_expr(&arm.body, scope);
                 }
+                // exhaustiveness: check all enum variants covered or has wildcard
                 if !has_wildcard && !arms.is_empty() {
-                    self.err(
-                        *span,
-                        "match is not exhaustive: add a _ wildcard arm".into(),
-                    );
+                    if let Ty::Named(enum_name) = &scrutinee_ty {
+                        if let Some(variants) = self.enums.get(enum_name) {
+                            let missing: Vec<&String> = variants
+                                .iter()
+                                .filter(|v| !covered_variants.contains(*v))
+                                .collect();
+                            if !missing.is_empty() {
+                                self.err(
+                                    *span,
+                                    format!(
+                                        "match not exhaustive: missing variants {}",
+                                        missing
+                                            .iter()
+                                            .map(|v| v.as_str())
+                                            .collect::<Vec<_>>()
+                                            .join(", ")
+                                    ),
+                                );
+                            }
+                        } else {
+                            self.err(
+                                *span,
+                                "match is not exhaustive: add a _ wildcard arm".into(),
+                            );
+                        }
+                    } else {
+                        self.err(
+                            *span,
+                            "match is not exhaustive: add a _ wildcard arm".into(),
+                        );
+                    }
                 }
             }
 
@@ -354,7 +401,7 @@ impl TypeChecker {
 
             Expr::Binary(lhs, op, rhs, span) => {
                 let lt = self.check_expr(lhs, scope);
-                let _rt = self.check_expr(rhs, scope);
+                let rt = self.check_expr(rhs, scope);
 
                 match op {
                     BinOp::Add
@@ -372,6 +419,21 @@ impl TypeChecker {
                     | BinOp::WrapMul => {
                         if lt != Ty::Unknown && !lt.is_numeric() {
                             self.err(*span, format!("arithmetic on non-numeric type {:?}", lt));
+                        }
+                        // no implicit promotion: u8 + u32 is an error
+                        if lt != Ty::Unknown
+                            && rt != Ty::Unknown
+                            && lt != rt
+                            && lt.is_integer()
+                            && rt.is_integer()
+                        {
+                            self.err(
+                                *span,
+                                format!(
+                                    "type mismatch in arithmetic: {:?} and {:?} (no implicit promotion)",
+                                    lt, rt
+                                ),
+                            );
                         }
                         lt
                     }
@@ -701,5 +763,46 @@ mod tests {
         let (result, warnings) = check_with_warnings("fn f() u32 { let x = 42; return x; }");
         assert!(result.is_ok());
         assert!(warnings.is_empty(), "used variable should not warn");
+    }
+
+    #[test]
+    #[test]
+    fn integer_promotion_rejected() {
+        // use function params to get distinct types
+        let result = check("fn f(a: u8, b: u32) { let c = a + b; }");
+        assert!(result.is_err());
+        assert!(
+            result.unwrap_err()[0]
+                .message
+                .contains("no implicit promotion")
+        );
+    }
+
+    #[test]
+    fn same_type_arithmetic_ok() {
+        assert!(check("fn f(a: u32, b: u32) u32 { return a + b; }").is_ok());
+    }
+
+    #[test]
+    #[test]
+    fn enum_exhaustive_match() {
+        // variant patterns need parens syntax: Variant()
+        assert!(
+            check(
+                "enum Color { Red, Green, Blue }
+             fn f(c: Color) { match c { Red() => 1, Green() => 2, Blue() => 3, } }"
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn enum_missing_variant() {
+        let result = check(
+            "enum Color { Red, Green, Blue }
+             fn f(c: Color) { match c { Red() => 1, Green() => 2, } }",
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err()[0].message.contains("missing variants"));
     }
 }
