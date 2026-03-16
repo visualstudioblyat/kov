@@ -3,6 +3,7 @@ pub mod elf;
 pub mod emit;
 pub mod encode;
 pub mod mmio;
+pub mod stack;
 pub mod startup;
 pub mod wcet;
 

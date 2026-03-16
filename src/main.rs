@@ -346,7 +346,16 @@ fn cmd_wcet(args: &[String]) {
 
     eprintln!("  wcet analysis ({} functions):", results.len());
     eprint!("{}", codegen::wcet::format_report(&results));
-    let _ = result; // ensure compilation succeeded
+
+    let stack_results: Vec<_> = ir
+        .functions
+        .iter()
+        .map(|f| codegen::stack::analyze(&ir.functions, &f.name, None))
+        .collect();
+
+    eprintln!("  stack analysis:");
+    eprint!("{}", codegen::stack::format_report(&stack_results));
+    let _ = result;
 }
 
 fn cmd_check(args: &[String]) {
