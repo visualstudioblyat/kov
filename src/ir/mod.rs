@@ -127,6 +127,9 @@ pub enum Terminator {
     // return error: propagate payload (a0) and error tag (a1) from callee
     ReturnError(Value, Value), // (payload, error_tag)
 
+    // tail call: jump to function reusing the stack frame
+    TailCall(String, Vec<Value>),
+
     // unreachable (after diverging calls, infinite loops)
     Unreachable,
 

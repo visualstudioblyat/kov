@@ -506,15 +506,34 @@ fn sub1(v: Value, from: Value, to: Value) -> Value {
     if v == from { to } else { v }
 }
 
+// tail call optimization: if a block's last instruction is Call and terminator is Return of that call's result, convert to a TailCall
+pub fn tail_call_opt(func: &mut Function) {
+    for block in &mut func.blocks {
+        if let Terminator::Return(Some(ret_val)) = &block.terminator {
+            if let Some(last) = block.insts.last() {
+                if last.result == *ret_val {
+                    if let Op::Call(name, args) = &last.op {
+                        let name = name.clone();
+                        let args = args.clone();
+                        block.insts.pop();
+                        block.terminator = Terminator::TailCall(name, args);
+                    }
+                }
+            }
+        }
+    }
+}
+
 // run all optimizations (two passes for propagation effects)
 pub fn optimize(func: &mut Function) {
     // pass 1
     constant_fold(func);
     strength_reduce(func);
     cse(func);
-    // pass 2 — folding may create new constants after CSE
+    // pass 2
     constant_fold(func);
     dead_code_elimination(func);
+    tail_call_opt(func);
 }
 
 #[cfg(test)]
@@ -622,6 +641,19 @@ mod tests {
             "CSE should eliminate duplicate a+b, got {} adds",
             add_count
         );
+    }
+
+    #[test]
+    fn tail_call_detected() {
+        let funcs = lower_and_opt(
+            "fn other(x: u32) u32 { return x; }\nfn f(x: u32) u32 { return other(x); }",
+        );
+        let f = funcs.iter().find(|f| f.name == "f").unwrap();
+        let has_tail = f
+            .blocks
+            .iter()
+            .any(|b| matches!(&b.terminator, Terminator::TailCall(n, _) if n == "other"));
+        assert!(has_tail, "return other(x) should be optimized to TailCall");
     }
 
     #[test]

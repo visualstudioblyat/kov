@@ -1,3 +1,6 @@
+#[cfg(test)]
+use super::encode::*;
+
 fn try_compress(inst: u32) -> Option<u16> {
     let opcode = inst & 0x7F;
     let rd = ((inst >> 7) & 0x1F) as u16;

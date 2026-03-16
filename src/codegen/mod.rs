@@ -445,6 +445,18 @@ impl CodeGen {
                 self.emitter
                     .emit_jump(j_offset(0), &format!("{}.epilogue", fn_name));
             }
+            Terminator::TailCall(name, args) => {
+                for (i, arg) in args.iter().enumerate() {
+                    if i < 8 {
+                        let src = ra.get(*arg);
+                        if src != A0 + i as u32 {
+                            self.emitter.emit32(mv(A0 + i as u32, src));
+                        }
+                    }
+                }
+                // jump to target instead of call — reuses caller's return address
+                self.emitter.emit_jump(j_offset(0), name);
+            }
             Terminator::Unreachable => {
                 self.emitter.emit32(ebreak());
             }
