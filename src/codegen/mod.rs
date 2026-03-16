@@ -1,5 +1,6 @@
 pub mod builtins;
 pub mod compress;
+pub mod disasm;
 pub mod elf;
 pub mod emit;
 pub mod encode;

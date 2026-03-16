@@ -25,6 +25,7 @@ fn main() {
         eprintln!();
         eprintln!("  build <file.kv> [-o output]   compile to binary");
         eprintln!("  run <file.kv> [-c cycles]     compile and execute");
+        eprintln!("  asm <file.kv>                 show generated assembly");
         eprintln!("  trace <file.kv> [-c cycles]   compile, execute, output JSON trace");
         eprintln!("  wcet <file.kv>                worst-case execution time analysis");
         eprintln!("  check <file.kv>               type check only");
@@ -38,6 +39,7 @@ fn main() {
     match args[1].as_str() {
         "lex" => cmd_lex(&args),
         "build" => cmd_build(&args),
+        "asm" => cmd_asm(&args),
         "run" => cmd_run(&args),
         "trace" => cmd_trace(&args),
         "wcet" => cmd_wcet(&args),
@@ -50,8 +52,9 @@ fn main() {
 }
 
 struct CompileResult {
-    code: Vec<u8>,       // uncompressed (for emulator)
-    compressed: Vec<u8>, // RV32C compressed (for output)
+    code: Vec<u8>,
+    compressed: Vec<u8>,
+    labels: std::collections::HashMap<String, usize>,
     flash_base: u32,
     ram_base: u32,
     ram_top: u32,
@@ -170,6 +173,7 @@ fn compile(source: &str) -> CompileResult {
         cg.gen_function(func);
     }
 
+    let labels = cg.emitter.labels.clone();
     let code = match cg.finish() {
         Ok(c) => c,
         Err(e) => die(&format!("codegen error: {e}")),
@@ -179,6 +183,7 @@ fn compile(source: &str) -> CompileResult {
     CompileResult {
         code,
         compressed,
+        labels,
         flash_base: board_config
             .as_ref()
             .map(|b| b.flash_start)
@@ -324,6 +329,19 @@ fn cmd_run(args: &[String]) {
             cpu.regs[i + 3]
         );
     }
+}
+
+fn cmd_asm(args: &[String]) {
+    if args.len() < 3 {
+        eprintln!("usage: kov asm <file.kv>");
+        process::exit(1);
+    }
+    let source = read_file(&args[2]);
+    let result = compile(&source);
+    println!(
+        "{}",
+        codegen::disasm::disassemble(&result.code, result.flash_base, &result.labels)
+    );
 }
 
 fn cmd_trace(args: &[String]) {
