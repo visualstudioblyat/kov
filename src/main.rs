@@ -25,6 +25,7 @@ fn main() {
         eprintln!();
         eprintln!("  build <file.kv> [-o output]   compile to binary");
         eprintln!("  run <file.kv> [-c cycles]     compile and execute");
+        eprintln!("  trace <file.kv> [-c cycles]   compile, execute, output JSON trace");
         eprintln!("  check <file.kv>               type check only");
         eprintln!("  lex <file.kv>                 dump tokens");
         eprintln!();
@@ -37,6 +38,7 @@ fn main() {
         "lex" => cmd_lex(&args),
         "build" => cmd_build(&args),
         "run" => cmd_run(&args),
+        "trace" => cmd_trace(&args),
         "check" => cmd_check(&args),
         _ => {
             eprintln!("unknown command: {}", args[1]);
@@ -289,6 +291,30 @@ fn cmd_run(args: &[String]) {
             i + 3,
             cpu.regs[i + 3]
         );
+    }
+}
+
+fn cmd_trace(args: &[String]) {
+    if args.len() < 3 {
+        eprintln!("usage: kov trace <file.kv> [-c cycles]");
+        process::exit(1);
+    }
+
+    let input = &args[2];
+    let max_cycles: u64 = find_flag(args, "-c")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1_000);
+
+    let source = read_file(input);
+    let result = compile(&source);
+
+    let mut cpu = emu::Cpu::with_memory(result.flash_base, result.flash_base, result.ram_base);
+    cpu.mem.load_flash(&result.code);
+    cpu.regs[2] = result.ram_top;
+    cpu.run_traced(max_cycles);
+
+    if let Some(trace) = &cpu.trace {
+        println!("{}", trace.to_json());
     }
 }
 

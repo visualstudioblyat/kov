@@ -6,6 +6,57 @@ pub struct Cpu {
     pub mem: Memory,
     pub halted: bool,
     pub cycles: u64,
+    pub trace: Option<Trace>,
+}
+
+pub struct Trace {
+    pub snapshots: Vec<Snapshot>,
+}
+
+#[derive(Clone)]
+pub struct Snapshot {
+    pub cycle: u64,
+    pub pc: u32,
+    pub regs: [u32; 32],
+    pub mmio_write: Option<(u32, u32)>, // (addr, value) if this cycle wrote MMIO
+}
+
+impl Trace {
+    pub fn new() -> Self {
+        Self {
+            snapshots: Vec::new(),
+        }
+    }
+
+    pub fn at_cycle(&self, cycle: u64) -> Option<&Snapshot> {
+        self.snapshots.iter().find(|s| s.cycle == cycle)
+    }
+
+    pub fn to_json(&self) -> String {
+        let mut out = String::from("[");
+        for (i, s) in self.snapshots.iter().enumerate() {
+            if i > 0 {
+                out.push(',');
+            }
+            out.push_str(&format!(
+                "{{\"cycle\":{},\"pc\":{},\"regs\":[{}]{}}}",
+                s.cycle,
+                s.pc,
+                s.regs
+                    .iter()
+                    .map(|r| r.to_string())
+                    .collect::<Vec<_>>()
+                    .join(","),
+                if let Some((addr, val)) = s.mmio_write {
+                    format!(",\"mmio\":{{\"addr\":{},\"val\":{}}}", addr, val)
+                } else {
+                    String::new()
+                }
+            ));
+        }
+        out.push(']');
+        out
+    }
 }
 
 // instruction fields
@@ -65,6 +116,7 @@ impl Cpu {
             mem: Memory::new(),
             halted: false,
             cycles: 0,
+            trace: None,
         }
     }
 
@@ -75,7 +127,12 @@ impl Cpu {
             mem: Memory::with_bases(flash_base, ram_base),
             halted: false,
             cycles: 0,
+            trace: None,
         }
+    }
+
+    pub fn enable_trace(&mut self) {
+        self.trace = Some(Trace::new());
     }
 
     fn reg(&self, r: usize) -> u32 {
@@ -263,12 +320,38 @@ impl Cpu {
         }
 
         self.pc = next_pc;
+
+        // record trace snapshot if enabled
+        if let Some(ref mut trace) = self.trace {
+            let mmio_len = self.mem.mmio_log.len();
+            let mmio_write = if mmio_len > 0 {
+                let last = &self.mem.mmio_log[mmio_len - 1];
+                if last.is_write {
+                    Some((last.address, last.value))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            trace.snapshots.push(Snapshot {
+                cycle: self.cycles,
+                pc: self.pc,
+                regs: self.regs,
+                mmio_write,
+            });
+        }
+
         true
     }
 
-    // run until halted or max cycles
     pub fn run(&mut self, max_cycles: u64) {
         while self.cycles < max_cycles && self.step() {}
+    }
+
+    pub fn run_traced(&mut self, max_cycles: u64) {
+        self.enable_trace();
+        self.run(max_cycles);
     }
 }
 
