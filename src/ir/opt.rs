@@ -235,8 +235,49 @@ fn mark_used(op: &Op, used: &mut HashSet<u32>) {
     }
 }
 
-// run all optimizations
+// strength reduction: replace expensive ops with cheaper equivalents
+pub fn strength_reduce(func: &mut Function) {
+    use std::collections::HashMap;
+    let mut constants: HashMap<u32, i32> = HashMap::new();
+    for block in &func.blocks {
+        for inst in &block.insts {
+            if let Op::ConstI32(v) = inst.op {
+                constants.insert(inst.result.0, v);
+            }
+        }
+    }
+
+    for block in &mut func.blocks {
+        for inst in &mut block.insts {
+            let new_op = match &inst.op {
+                Op::Mul(a, b) => {
+                    let av = constants.get(&a.0).copied();
+                    let bv = constants.get(&b.0).copied();
+                    let a = *a;
+                    let b = *b;
+                    if let Some(v) = bv {
+                        if v == 2 { Some(Op::Add(a, a)) } else { None }
+                    } else if let Some(v) = av {
+                        if v == 2 { Some(Op::Add(b, b)) } else { None }
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
+            if let Some(op) = new_op {
+                inst.op = op;
+            }
+        }
+    }
+}
+
+// run all optimizations (two passes for propagation effects)
 pub fn optimize(func: &mut Function) {
+    // pass 1
+    constant_fold(func);
+    strength_reduce(func);
+    // pass 2 — folding may create new constants
     constant_fold(func);
     dead_code_elimination(func);
 }
@@ -294,5 +335,34 @@ mod tests {
             .filter(|i| matches!(i.op, Op::ConstI32(_)))
             .count();
         assert_eq!(const_count, 1, "unused y should be eliminated");
+    }
+
+    #[test]
+    fn strength_reduce_mul_2() {
+        let funcs = lower_and_opt("fn f(x: u32) u32 { return x * 2; }");
+        let func = &funcs[0];
+        // x * 2 should become x + x (no Mul instruction)
+        let has_mul = func
+            .blocks
+            .iter()
+            .any(|b| b.insts.iter().any(|i| matches!(i.op, Op::Mul(_, _))));
+        assert!(!has_mul, "x * 2 should be strength-reduced to x + x");
+        let has_add = func
+            .blocks
+            .iter()
+            .any(|b| b.insts.iter().any(|i| matches!(i.op, Op::Add(_, _))));
+        assert!(has_add, "should have Add(x, x) instead of Mul");
+    }
+
+    #[test]
+    fn chained_constant_fold() {
+        // 2 + 3 folds to 5, then 5 * 4 folds to 20
+        let funcs = lower_and_opt("fn f() u32 { let a = 2 + 3; let b = a * 4; return b; }");
+        let func = &funcs[0];
+        let has_twenty = func
+            .blocks
+            .iter()
+            .any(|b| b.insts.iter().any(|i| matches!(i.op, Op::ConstI32(20))));
+        assert!(has_twenty, "2+3 then *4 should fold to 20");
     }
 }
