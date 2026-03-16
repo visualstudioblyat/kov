@@ -135,8 +135,30 @@ impl<'src> Lexer<'src> {
             return self.lex_string(start);
         }
 
-        // char literal
+        // char literal or lifetime label
         if b == b'\'' {
+            // peek ahead: if it's an ident start and the char after isn't a closing quote,
+            // it's a lifetime label like 'outer
+            if self.peek().is_ascii_alphabetic() || self.peek() == b'_' {
+                // check if this is 'x' (char) or 'ident (lifetime)
+                // look for closing quote after one char
+                let next = self.peek();
+                if self.pos + 1 < self.src.len() as u32
+                    && self.src[self.pos as usize + 1] == b'\''
+                    && !(next.is_ascii_alphanumeric()
+                        && self.pos + 2 < self.src.len() as u32
+                        && self.src[self.pos as usize + 2].is_ascii_alphanumeric())
+                {
+                    return self.lex_char(start);
+                }
+                // check if next-next is quote (single char literal like 'a')
+                if self.pos + 1 < self.src.len() as u32 && self.src[self.pos as usize + 1] == b'\''
+                {
+                    return self.lex_char(start);
+                }
+                // it's a lifetime: 'ident
+                return self.lex_lifetime(start);
+            }
             return self.lex_char(start);
         }
 
@@ -291,6 +313,20 @@ impl<'src> Lexer<'src> {
         self.advance(); // closing "
         Ok(Token {
             kind: TokenKind::StringLit(s),
+            span: Span::new(start, self.pos),
+        })
+    }
+
+    fn lex_lifetime(&mut self, start: u32) -> Result<Token, LexError> {
+        // opening ' already consumed by caller, peek is the first ident char
+        let name_start = self.pos;
+        while self.peek().is_ascii_alphanumeric() || self.peek() == b'_' {
+            self.advance();
+        }
+        let name =
+            String::from_utf8_lossy(&self.src[name_start as usize..self.pos as usize]).to_string();
+        Ok(Token {
+            kind: TokenKind::Lifetime(name),
             span: Span::new(start, self.pos),
         })
     }

@@ -20,7 +20,11 @@ fn main() {
         eprintln!();
         eprintln!("  build <file.kv> [-o output]   compile to binary");
         eprintln!("  run <file.kv> [-c cycles]     compile and execute");
+        eprintln!("  check <file.kv>               type check only");
         eprintln!("  lex <file.kv>                 dump tokens");
+        eprintln!();
+        eprintln!("flags:");
+        eprintln!("  --error-format=json           output errors as JSON");
         process::exit(1);
     }
 
@@ -28,6 +32,7 @@ fn main() {
         "lex" => cmd_lex(&args),
         "build" => cmd_build(&args),
         "run" => cmd_run(&args),
+        "check" => cmd_check(&args),
         _ => {
             eprintln!("unknown command: {}", args[1]);
             process::exit(1);
@@ -251,6 +256,77 @@ fn cmd_run(args: &[String]) {
             i + 3,
             cpu.regs[i + 3]
         );
+    }
+}
+
+fn cmd_check(args: &[String]) {
+    if args.len() < 3 {
+        eprintln!("usage: kov check <file.kv>");
+        process::exit(1);
+    }
+
+    let input = &args[2];
+    let json_mode = args.iter().any(|a| a == "--error-format=json");
+    let source = read_file(input);
+
+    let tokens = match lexer::Lexer::tokenize(&source) {
+        Ok(t) => t,
+        Err(e) => {
+            if json_mode {
+                println!(
+                    "{}",
+                    errors::format_error_json(
+                        input,
+                        &source,
+                        lexer::token::Span::new(0, 0),
+                        &format!("{e}"),
+                        "error"
+                    )
+                );
+            } else {
+                eprintln!("error: {e}");
+            }
+            process::exit(1);
+        }
+    };
+
+    let program = match parser::Parser::new(tokens).parse() {
+        Ok(p) => p,
+        Err(e) => {
+            if json_mode {
+                println!(
+                    "{}",
+                    errors::format_error_json(
+                        input,
+                        &source,
+                        lexer::token::Span::new(0, 0),
+                        &format!("{e}"),
+                        "error"
+                    )
+                );
+            } else {
+                eprintln!("error: {e}");
+            }
+            process::exit(1);
+        }
+    };
+
+    if let Err(type_errors) = types::check::TypeChecker::new().check(&program) {
+        for e in &type_errors {
+            if json_mode {
+                println!(
+                    "{}",
+                    errors::format_error_json(input, &source, e.span, &e.message, "error")
+                );
+            } else {
+                eprint!("{}", errors::format_error(&source, e.span, &e.message));
+            }
+        }
+        process::exit(1);
+    }
+
+    if !json_mode {
+        eprintln!("  check: ok");
     }
 }
 

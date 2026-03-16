@@ -34,6 +34,7 @@ pub enum TokenKind {
 
     // ── Identifier ──
     Ident(String),
+    Lifetime(String), // 'label
 
     // ── Keywords ──
     Board,

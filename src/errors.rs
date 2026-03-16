@@ -1,5 +1,26 @@
 use crate::lexer::token::Span;
 
+pub fn format_error_json(
+    file: &str,
+    source: &str,
+    span: Span,
+    message: &str,
+    severity: &str,
+) -> String {
+    let (line, col, _) = locate(source, span.start);
+    let (end_line, end_col, _) = locate(source, span.end);
+    format!(
+        r#"{{"file":"{}","line":{},"column":{},"end_line":{},"end_column":{},"severity":"{}","message":"{}"}}"#,
+        file,
+        line,
+        col,
+        end_line,
+        end_col,
+        severity,
+        message.replace('"', "\\\""),
+    )
+}
+
 pub fn format_error(source: &str, span: Span, message: &str) -> String {
     let (line_num, col, line_text) = locate(source, span.start);
     let width = ((span.end - span.start) as usize).max(1);
