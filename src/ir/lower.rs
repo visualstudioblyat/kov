@@ -7,6 +7,39 @@ use std::collections::HashMap;
 pub struct Lowering {
     pub functions: Vec<Function>,
     pub globals: super::globals::GlobalTable,
+    pub struct_layouts: HashMap<String, StructLayout>,
+}
+
+#[derive(Debug, Clone)]
+pub struct StructLayout {
+    pub size: u32,
+    pub fields: Vec<(String, u32, IrType)>, // (name, offset, type)
+}
+
+impl StructLayout {
+    fn from_def(def: &ast::StructDef) -> Self {
+        let mut offset = 0u32;
+        let mut fields = Vec::new();
+        for f in &def.fields {
+            let ty = ast_type_to_ir(&Some(f.ty.clone()));
+            let size = ty.size_bytes().max(1);
+            // align to natural boundary
+            let align = size;
+            offset = (offset + align - 1) & !(align - 1);
+            fields.push((f.name.clone(), offset, ty));
+            offset += size;
+        }
+        // align total size to 4
+        let size = (offset + 3) & !3;
+        Self { size, fields }
+    }
+
+    pub fn field_offset(&self, name: &str) -> Option<(u32, IrType)> {
+        self.fields
+            .iter()
+            .find(|(n, _, _)| n == name)
+            .map(|(_, off, ty)| (*off, *ty))
+    }
 }
 
 // tracks what a variable represents for MMIO resolution
@@ -22,8 +55,10 @@ struct FnBuilder<'a> {
     current_block: Block,
     vars: HashMap<String, Value>,
     var_kinds: HashMap<String, VarKind>,
+    var_types: HashMap<String, String>, // var_name → struct type name (for field access)
     periph_map: &'a PeripheralMap,
     globals: &'a super::globals::GlobalTable,
+    struct_layouts: &'a HashMap<String, StructLayout>,
     loop_stack: Vec<(Block, Block)>, // (header/continue_target, exit_block)
 }
 
@@ -34,8 +69,14 @@ impl Lowering {
         let periph_map = PeripheralMap::from_program(program);
         let mut functions = Vec::new();
         let mut globals = GlobalTable::new();
+        let mut struct_layouts = HashMap::new();
 
-        // first pass: collect globals
+        // first pass: collect structs and globals
+        for item in &program.items {
+            if let TopItem::Struct(s) = item {
+                struct_layouts.insert(s.name.clone(), StructLayout::from_def(s));
+            }
+        }
         for item in &program.items {
             if let TopItem::Static(s) = item {
                 let ty = ast_type_to_ir(&Some(s.ty.clone()));
@@ -52,7 +93,7 @@ impl Lowering {
             match item {
                 TopItem::Function(f) => {
                     collect_body_statics(&f.body, &mut globals);
-                    functions.push(lower_fn(f, &periph_map, &globals));
+                    functions.push(lower_fn(f, &periph_map, &globals, &struct_layouts));
                 }
                 TopItem::Interrupt(i) => {
                     collect_body_statics(&i.body, &mut globals);
@@ -65,13 +106,17 @@ impl Lowering {
                         body: i.body.clone(),
                         span: i.span,
                     };
-                    functions.push(lower_fn(&fake_fn, &periph_map, &globals));
+                    functions.push(lower_fn(&fake_fn, &periph_map, &globals, &struct_layouts));
                 }
                 _ => {}
             }
         }
 
-        Self { functions, globals }
+        Self {
+            functions,
+            globals,
+            struct_layouts,
+        }
     }
 }
 
@@ -130,6 +175,7 @@ fn lower_fn(
     f: &ast::FnDef,
     periph_map: &PeripheralMap,
     globals: &super::globals::GlobalTable,
+    struct_layouts: &HashMap<String, StructLayout>,
 ) -> Function {
     let params: Vec<(String, IrType)> = f
         .params
@@ -164,8 +210,10 @@ fn lower_fn(
         current_block: entry,
         vars,
         var_kinds,
+        var_types: HashMap::new(),
         periph_map,
         globals,
+        struct_layouts,
         loop_stack: Vec::new(),
     };
 
@@ -264,6 +312,10 @@ impl<'a> FnBuilder<'a> {
                 // detect peripheral handle creation: b.gpio.pin(N, ...)
                 if let Some(kind) = self.detect_peripheral_handle(value) {
                     self.var_kinds.insert(name.clone(), kind);
+                }
+                // track struct type for field access
+                if let Expr::StructLit(struct_name, _, _) = value {
+                    self.var_types.insert(name.clone(), struct_name.clone());
                 }
                 let val = self.lower_expr(value);
                 self.vars.insert(name.clone(), val);
@@ -671,9 +723,30 @@ impl<'a> FnBuilder<'a> {
                 self.emit(Op::Call(method.clone(), arg_vals), IrType::Void)
             }
 
-            Expr::Field(obj, _field, _) => {
-                // TODO: struct field offset calculation
-                self.lower_expr(obj)
+            Expr::Field(obj, field, _) => {
+                // check if this is a peripheral field access (b.gpio) — skip offset calc
+                if let Expr::Ident(var_name, _) = obj.as_ref() {
+                    if let Some(VarKind::Board(_)) = self.var_kinds.get(var_name) {
+                        return self.lower_expr(obj);
+                    }
+                }
+                // struct field access: base_ptr + offset → load
+                let base = self.lower_expr(obj);
+                if let Expr::Ident(var_name, _) = obj.as_ref() {
+                    if let Some(struct_name) = self.var_types.get(var_name) {
+                        if let Some(layout) = self.struct_layouts.get(struct_name) {
+                            if let Some((offset, ty)) = layout.field_offset(field) {
+                                if offset == 0 {
+                                    return self.emit(Op::Load(base, ty), ty);
+                                }
+                                let off = self.emit(Op::ConstI32(offset as i32), IrType::I32);
+                                let addr = self.emit(Op::Add(base, off), IrType::Ptr);
+                                return self.emit(Op::Load(addr, ty), ty);
+                            }
+                        }
+                    }
+                }
+                base
             }
 
             Expr::StringLit(_, _) => {
@@ -681,8 +754,31 @@ impl<'a> FnBuilder<'a> {
                 self.emit(Op::ConstI32(0), IrType::Ptr) // placeholder
             }
 
+            Expr::StructLit(name, fields, _) => {
+                if let Some(layout) = self.struct_layouts.get(name) {
+                    // allocate stack space for the struct
+                    let base = self.emit(Op::StackAlloc(layout.size), IrType::Ptr);
+                    // store each field at its offset
+                    for (field_name, expr) in fields {
+                        let val = self.lower_expr(expr);
+                        if let Some((offset, _ty)) = layout.field_offset(field_name) {
+                            if offset == 0 {
+                                self.emit(Op::Store(base, val), IrType::Void);
+                            } else {
+                                let off = self.emit(Op::ConstI32(offset as i32), IrType::I32);
+                                let addr = self.emit(Op::Add(base, off), IrType::Ptr);
+                                self.emit(Op::Store(addr, val), IrType::Void);
+                            }
+                        }
+                    }
+                    base
+                } else {
+                    self.emit(Op::Nop, IrType::Void)
+                }
+            }
+
             _ => {
-                // DotEnum, ArrayLit, StructLit, etc — TODO
+                // DotEnum, ArrayLit, etc — TODO
                 self.emit(Op::Nop, IrType::Void)
             }
         }
@@ -860,5 +956,68 @@ mod tests {
             "match with wildcard needs check+body+merge"
         );
         println!("{}", func);
+    }
+
+    #[test]
+    fn lower_struct_lit_and_field() {
+        let ir = lower(
+            "struct Point { x: u32, y: u32 }\nfn f() u32 { let p = Point { x: 10, y: 20 }; return p.x; }",
+        );
+        let func = &ir.functions[0];
+        // should have StackAlloc for the struct
+        let has_alloc = func
+            .blocks
+            .iter()
+            .any(|b| b.insts.iter().any(|i| matches!(&i.op, Op::StackAlloc(_))));
+        assert!(has_alloc, "struct literal should emit StackAlloc");
+        // should have Store ops for field initialization
+        let store_count = func
+            .blocks
+            .iter()
+            .flat_map(|b| b.insts.iter())
+            .filter(|i| matches!(&i.op, Op::Store(_, _)))
+            .count();
+        assert!(
+            store_count >= 2,
+            "should store both fields, got {}",
+            store_count
+        );
+        // should have Load for field read
+        let has_load = func
+            .blocks
+            .iter()
+            .any(|b| b.insts.iter().any(|i| matches!(&i.op, Op::Load(_, _))));
+        assert!(has_load, "field access should emit Load");
+        println!("{}", func);
+    }
+
+    #[test]
+    fn struct_layout_offsets() {
+        let layout = StructLayout::from_def(&ast::StructDef {
+            name: "Test".into(),
+            fields: vec![
+                ast::StructField {
+                    name: "a".into(),
+                    ty: ast::Type::Primitive(ast::PrimitiveType::U8),
+                    span: crate::lexer::token::Span { start: 0, end: 0 },
+                },
+                ast::StructField {
+                    name: "b".into(),
+                    ty: ast::Type::Primitive(ast::PrimitiveType::U32),
+                    span: crate::lexer::token::Span { start: 0, end: 0 },
+                },
+                ast::StructField {
+                    name: "c".into(),
+                    ty: ast::Type::Primitive(ast::PrimitiveType::U16),
+                    span: crate::lexer::token::Span { start: 0, end: 0 },
+                },
+            ],
+            span: crate::lexer::token::Span { start: 0, end: 0 },
+        });
+        // u8 at 0, u32 aligned to 4, u16 aligned to 2 after u32
+        assert_eq!(layout.field_offset("a"), Some((0, IrType::I8)));
+        assert_eq!(layout.field_offset("b"), Some((4, IrType::I32)));
+        assert_eq!(layout.field_offset("c"), Some((8, IrType::I16)));
+        assert_eq!(layout.size, 12); // 10 rounded to 4
     }
 }
