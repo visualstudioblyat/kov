@@ -52,12 +52,19 @@ pub struct BoardField {
 #[derive(Debug, Clone)]
 pub struct FnDef {
     pub name: String,
+    pub type_params: Vec<TypeParam>,
     pub attrs: Vec<Attribute>,
     pub params: Vec<Param>,
     pub ret_type: Option<Type>,
-    pub is_error_return: bool, // !T syntax
+    pub is_error_return: bool,
     pub body: Block,
     pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct TypeParam {
+    pub name: String,
+    pub bounds: Vec<String>, // T: Copy + Sized
 }
 
 #[derive(Debug, Clone)]
@@ -72,6 +79,7 @@ pub struct InterruptDef {
 #[derive(Debug, Clone)]
 pub struct StructDef {
     pub name: String,
+    pub type_params: Vec<TypeParam>,
     pub fields: Vec<StructField>,
     pub span: Span,
 }

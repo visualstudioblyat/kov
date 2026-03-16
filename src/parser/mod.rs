@@ -281,6 +281,7 @@ impl Parser {
         let start = self.span();
         self.advance(); // fn
         let name = self.expect_ident()?;
+        let type_params = self.parse_type_params()?;
         self.expect(&TokenKind::LParen)?;
         let params = self.parse_param_list()?;
         self.expect(&TokenKind::RParen)?;
@@ -299,6 +300,7 @@ impl Parser {
         let end_span = body.span;
         Ok(FnDef {
             name,
+            type_params,
             attrs,
             params,
             ret_type,
@@ -340,6 +342,7 @@ impl Parser {
         let start = self.span();
         self.advance(); // struct
         let name = self.expect_ident()?;
+        let type_params = self.parse_type_params()?;
         self.expect(&TokenKind::LBrace)?;
         let mut fields = Vec::new();
         while !matches!(self.peek(), TokenKind::RBrace) {
@@ -358,6 +361,7 @@ impl Parser {
         let end = self.expect(&TokenKind::RBrace)?;
         Ok(StructDef {
             name,
+            type_params,
             fields,
             span: Span::new(start.start, end.end),
         })
@@ -478,6 +482,29 @@ impl Parser {
             ret_type,
             span: Span::new(start.start, end.end),
         })
+    }
+
+    fn parse_type_params(&mut self) -> R<Vec<TypeParam>> {
+        if !self.eat(&TokenKind::Lt) {
+            return Ok(Vec::new());
+        }
+        let mut params = Vec::new();
+        loop {
+            let name = self.expect_ident()?;
+            let mut bounds = Vec::new();
+            if self.eat(&TokenKind::Colon) {
+                bounds.push(self.expect_ident()?);
+                while self.eat(&TokenKind::Plus) {
+                    bounds.push(self.expect_ident()?);
+                }
+            }
+            params.push(TypeParam { name, bounds });
+            if !self.eat(&TokenKind::Comma) {
+                break;
+            }
+        }
+        self.expect(&TokenKind::Gt)?;
+        Ok(params)
     }
 
     fn parse_param_list(&mut self) -> R<Vec<Param>> {
@@ -1442,6 +1469,35 @@ mod tests {
                 assert!(e.ret_type.is_some());
             }
             _ => panic!("expected extern fn"),
+        }
+    }
+
+    #[test]
+    fn parse_generic_fn() {
+        let prog = parse("fn max<T: Ord>(a: T, b: T) T { return a; }");
+        match &prog.items[0] {
+            TopItem::Function(f) => {
+                assert_eq!(f.name, "max");
+                assert_eq!(f.type_params.len(), 1);
+                assert_eq!(f.type_params[0].name, "T");
+                assert_eq!(f.type_params[0].bounds, vec!["Ord"]);
+                assert_eq!(f.params.len(), 2);
+            }
+            _ => panic!("expected function"),
+        }
+    }
+
+    #[test]
+    fn parse_generic_struct() {
+        let prog = parse("struct Pair<A, B> { first: A, second: B }");
+        match &prog.items[0] {
+            TopItem::Struct(s) => {
+                assert_eq!(s.name, "Pair");
+                assert_eq!(s.type_params.len(), 2);
+                assert_eq!(s.type_params[0].name, "A");
+                assert_eq!(s.type_params[1].name, "B");
+            }
+            _ => panic!("expected struct"),
         }
     }
 }

@@ -111,6 +111,7 @@ impl Lowering {
                     collect_body_statics(&i.body, &mut globals);
                     let fake_fn = ast::FnDef {
                         name: i.fn_name.clone(),
+                        type_params: Vec::new(),
                         attrs: Vec::new(),
                         params: Vec::new(),
                         ret_type: None,
@@ -1151,6 +1152,7 @@ mod tests {
     fn struct_layout_offsets() {
         let layout = StructLayout::from_def(&ast::StructDef {
             name: "Test".into(),
+            type_params: Vec::new(),
             fields: vec![
                 ast::StructField {
                     name: "a".into(),
