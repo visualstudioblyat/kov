@@ -321,27 +321,6 @@ impl Cpu {
 
         self.pc = next_pc;
 
-        // record trace snapshot if enabled
-        if let Some(ref mut trace) = self.trace {
-            let mmio_len = self.mem.mmio_log.len();
-            let mmio_write = if mmio_len > 0 {
-                let last = &self.mem.mmio_log[mmio_len - 1];
-                if last.is_write {
-                    Some((last.address, last.value))
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-            trace.snapshots.push(Snapshot {
-                cycle: self.cycles,
-                pc: self.pc,
-                regs: self.regs,
-                mmio_write,
-            });
-        }
-
         true
     }
 
@@ -350,8 +329,31 @@ impl Cpu {
     }
 
     pub fn run_traced(&mut self, max_cycles: u64) {
-        self.enable_trace();
-        self.run(max_cycles);
+        self.trace = Some(Trace::new());
+        while self.cycles < max_cycles && !self.halted {
+            let mmio_before = self.mem.mmio_log.len();
+            if !self.step() {
+                break;
+            }
+            let mmio_write = if self.mem.mmio_log.len() > mmio_before {
+                let last = &self.mem.mmio_log[self.mem.mmio_log.len() - 1];
+                if last.is_write {
+                    Some((last.address, last.value))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+            if let Some(ref mut trace) = self.trace {
+                trace.snapshots.push(Snapshot {
+                    cycle: self.cycles,
+                    pc: self.pc,
+                    regs: self.regs,
+                    mmio_write,
+                });
+            }
+        }
     }
 }
 
