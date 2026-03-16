@@ -64,7 +64,8 @@ impl Parser {
                 | TokenKind::Static
                 | TokenKind::Import
                 | TokenKind::Interrupt
-                | TokenKind::Type => return,
+                | TokenKind::Type
+                | TokenKind::Extern => return,
                 _ => {
                     self.advance_any();
                 }
@@ -179,6 +180,7 @@ impl Parser {
             TokenKind::Const => Ok(TopItem::Const(self.parse_const()?)),
             TokenKind::Static => Ok(TopItem::Static(self.parse_static()?)),
             TokenKind::Type => Ok(TopItem::TypeAlias(self.parse_type_alias()?)),
+            TokenKind::Extern => Ok(TopItem::ExternFn(self.parse_extern_fn()?)),
             _ => Err(self.error(format!("unexpected token {:?} at top level", self.peek()))),
         }
     }
@@ -442,6 +444,38 @@ impl Parser {
         Ok(TypeAlias {
             name,
             ty,
+            span: Span::new(start.start, end.end),
+        })
+    }
+
+    fn parse_extern_fn(&mut self) -> R<ExternFnDecl> {
+        let start = self.span();
+        self.advance(); // extern
+        // parse ABI string: "C"
+        let abi = if let TokenKind::StringLit(s) = self.peek().clone() {
+            self.advance();
+            s
+        } else {
+            "C".to_string()
+        };
+        self.expect(&TokenKind::Fn)?;
+        let name = self.expect_ident()?;
+        self.expect(&TokenKind::LParen)?;
+        let params = self.parse_param_list()?;
+        self.expect(&TokenKind::RParen)?;
+
+        let ret_type = if !matches!(self.peek(), TokenKind::Semicolon) {
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+
+        let end = self.expect(&TokenKind::Semicolon)?;
+        Ok(ExternFnDecl {
+            abi,
+            name,
+            params,
+            ret_type,
             span: Span::new(start.start, end.end),
         })
     }
@@ -1341,5 +1375,31 @@ mod tests {
             "should recover and report multiple errors, got {}",
             errors.len()
         );
+    }
+
+    #[test]
+    fn parse_extern_fn() {
+        let prog = parse("extern \"C\" fn HAL_GPIO_Write(port: u32, pin: u32, state: u32);");
+        assert_eq!(prog.items.len(), 1);
+        match &prog.items[0] {
+            TopItem::ExternFn(e) => {
+                assert_eq!(e.abi, "C");
+                assert_eq!(e.name, "HAL_GPIO_Write");
+                assert_eq!(e.params.len(), 3);
+            }
+            _ => panic!("expected extern fn"),
+        }
+    }
+
+    #[test]
+    fn parse_extern_with_return() {
+        let prog = parse("extern \"C\" fn read_sensor() u32;");
+        match &prog.items[0] {
+            TopItem::ExternFn(e) => {
+                assert_eq!(e.name, "read_sensor");
+                assert!(e.ret_type.is_some());
+            }
+            _ => panic!("expected extern fn"),
+        }
     }
 }

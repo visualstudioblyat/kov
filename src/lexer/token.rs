@@ -38,6 +38,7 @@ pub enum TokenKind {
 
     // ── Keywords ──
     Board,
+    Extern,
     Fn,
     Struct,
     Enum,
@@ -165,6 +166,7 @@ impl TokenKind {
     pub fn keyword(s: &str) -> Option<TokenKind> {
         match s {
             "board" => Some(TokenKind::Board),
+            "extern" => Some(TokenKind::Extern),
             "fn" => Some(TokenKind::Fn),
             "struct" => Some(TokenKind::Struct),
             "enum" => Some(TokenKind::Enum),

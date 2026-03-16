@@ -43,6 +43,11 @@ impl TypeChecker {
                 TopItem::Struct(s) => self.register_struct(s),
                 TopItem::Enum(e) => self.register_enum(e),
                 TopItem::Function(f) => self.register_fn(f),
+                TopItem::ExternFn(e) => {
+                    let params: Vec<Ty> = e.params.iter().map(|p| Ty::from_ast(&p.ty)).collect();
+                    let ret = e.ret_type.as_ref().map(Ty::from_ast).unwrap_or(Ty::Void);
+                    self.fn_sigs.insert(e.name.clone(), (params, ret));
+                }
                 _ => {}
             }
         }

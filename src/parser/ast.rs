@@ -16,6 +16,16 @@ pub enum TopItem {
     Const(ConstDef),
     Static(StaticDef),
     TypeAlias(TypeAlias),
+    ExternFn(ExternFnDecl),
+}
+
+#[derive(Debug, Clone)]
+pub struct ExternFnDecl {
+    pub abi: String,
+    pub name: String,
+    pub params: Vec<Param>,
+    pub ret_type: Option<Type>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
