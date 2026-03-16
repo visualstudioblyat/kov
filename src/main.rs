@@ -173,6 +173,46 @@ fn compile(source: &str) -> CompileResult {
         cg.gen_function(func);
     }
 
+    // enforce #[stack(N)] and #[max_cycles(N)] attributes
+    for item in &program.items {
+        if let parser::ast::TopItem::Function(f) = item {
+            for attr in &f.attrs {
+                if attr.name == "stack" {
+                    if let Some(parser::ast::Expr::IntLit(limit, _)) = attr.args.first() {
+                        let result = codegen::stack::analyze(
+                            &ir_result.functions,
+                            &f.name,
+                            Some(*limit as u32),
+                        );
+                        if result.exceeded {
+                            die(&format!(
+                                "#[stack({})] on {}: worst-case stack depth is {} bytes (chain: {})",
+                                limit,
+                                f.name,
+                                result.max_depth,
+                                result.call_chain.join(" -> ")
+                            ));
+                        }
+                    }
+                }
+                if attr.name == "max_cycles" {
+                    if let Some(parser::ast::Expr::IntLit(limit, _)) = attr.args.first() {
+                        let ir_func = ir_result.functions.iter().find(|func| func.name == f.name);
+                        if let Some(ir_func) = ir_func {
+                            let result = codegen::wcet::analyze(ir_func, Some(*limit as u32));
+                            if result.exceeded {
+                                die(&format!(
+                                    "#[max_cycles({})] on {}: worst-case is {} cycles",
+                                    limit, f.name, result.total_cycles
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     let labels = cg.emitter.labels.clone();
     let code = match cg.finish() {
         Ok(c) => c,
