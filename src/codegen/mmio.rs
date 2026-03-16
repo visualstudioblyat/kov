@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use crate::parser::ast::{Program, TopItem, BoardField, Expr};
+use crate::parser::ast::{Program, TopItem, Expr};
 
 pub struct PeripheralMap {
     // "gpio" → 0x6000_4000

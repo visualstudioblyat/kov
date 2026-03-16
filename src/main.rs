@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 mod lexer;
 mod parser;
 mod types;
@@ -70,11 +72,12 @@ fn compile(source: &str) -> CompileResult {
         } else { None }
     }).collect();
 
-    let ir_result = ir::lower::Lowering::lower(&program);
-    let mut cg = codegen::CodeGen::new();
-
     let board_config = board_name.as_deref()
         .and_then(codegen::startup::BoardConfig::from_name);
+
+    let ir_result = ir::lower::Lowering::lower(&program);
+    let ram_base = board_config.as_ref().map(|b| b.ram_start).unwrap_or(0x2000_0000);
+    let mut cg = codegen::CodeGen::new_with_globals(ram_base, &ir_result.globals);
 
     if let Some(ref board) = board_config {
         codegen::startup::emit_startup(&mut cg.emitter, board);

@@ -239,7 +239,7 @@ impl TypeChecker {
 
             Expr::Binary(lhs, op, rhs, span) => {
                 let lt = self.check_expr(lhs, scope);
-                let rt = self.check_expr(rhs, scope);
+                let _rt = self.check_expr(rhs, scope);
 
                 match op {
                     BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem

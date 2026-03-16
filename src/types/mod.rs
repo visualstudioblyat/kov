@@ -1,6 +1,5 @@
 pub mod check;
 
-use std::collections::HashMap;
 use crate::parser::ast;
 use crate::lexer::token::Span;
 

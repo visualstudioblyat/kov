@@ -161,7 +161,7 @@ pub fn li32(rd: u32, value: i32) -> (u32, Option<u32>) {
         return (addi(rd, ZERO, value), None);
     }
 
-    let mut upper = ((value as u32) + 0x800) & 0xFFFFF000;
+    let upper = ((value as u32) + 0x800) & 0xFFFFF000;
     let lower = value.wrapping_sub(upper as i32);
 
     (lui(rd, upper), Some(addi(rd, rd, lower)))
