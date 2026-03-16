@@ -1,13 +1,20 @@
 pub mod check;
 
-use crate::parser::ast;
 use crate::lexer::token::Span;
+use crate::parser::ast;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Ty {
-    U8, U16, U32, U64,
-    I8, I16, I32, I64,
-    Bool, Void,
+    U8,
+    U16,
+    U32,
+    U64,
+    I8,
+    I16,
+    I32,
+    I64,
+    Bool,
+    Void,
     Ptr(Box<Ty>),
     MutRef(Box<Ty>),
     Ref(Box<Ty>),
@@ -52,7 +59,10 @@ impl Ty {
     }
 
     pub fn is_integer(&self) -> bool {
-        matches!(self, Ty::U8 | Ty::U16 | Ty::U32 | Ty::U64 | Ty::I8 | Ty::I16 | Ty::I32 | Ty::I64)
+        matches!(
+            self,
+            Ty::U8 | Ty::U16 | Ty::U32 | Ty::U64 | Ty::I8 | Ty::I16 | Ty::I32 | Ty::I64
+        )
     }
 
     pub fn is_numeric(&self) -> bool {
@@ -68,6 +78,10 @@ pub struct TypeError {
 
 impl std::fmt::Display for TypeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "type error at {}..{}: {}", self.span.start, self.span.end, self.message)
+        write!(
+            f,
+            "type error at {}..{}: {}",
+            self.span.start, self.span.end, self.message
+        )
     }
 }

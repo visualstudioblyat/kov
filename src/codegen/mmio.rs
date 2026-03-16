@@ -1,5 +1,5 @@
+use crate::parser::ast::{Expr, Program, TopItem};
 use std::collections::HashMap;
-use crate::parser::ast::{Program, TopItem, Expr};
 
 pub struct PeripheralMap {
     // "gpio" → 0x6000_4000
@@ -27,16 +27,17 @@ impl PeripheralMap {
             if let TopItem::Board(b) = item {
                 board_name = Some(b.name.clone());
                 for field in &b.fields {
-                    if let Some(addr_expr) = &field.address {
-                        if let Expr::IntLit(addr, _) = addr_expr {
-                            addresses.insert(field.name.clone(), *addr as u32);
-                        }
+                    if let Some(Expr::IntLit(addr, _)) = &field.address {
+                        addresses.insert(field.name.clone(), *addr as u32);
                     }
                 }
             }
         }
 
-        Self { addresses, board_name }
+        Self {
+            addresses,
+            board_name,
+        }
     }
 
     pub fn get_address(&self, peripheral: &str) -> Option<u32> {

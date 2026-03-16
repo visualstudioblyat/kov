@@ -1,6 +1,6 @@
-pub mod types;
-pub mod lower;
 pub mod globals;
+pub mod lower;
+pub mod types;
 
 use types::IrType;
 
@@ -59,24 +59,24 @@ pub enum Op {
     Or(Value, Value),
     Xor(Value, Value),
     Shl(Value, Value),
-    Shr(Value, Value),        // logical
-    Sar(Value, Value),        // arithmetic
+    Shr(Value, Value), // logical
+    Sar(Value, Value), // arithmetic
 
     // comparison → bool
     Eq(Value, Value),
     Ne(Value, Value),
     Lt(Value, Value),
     Ge(Value, Value),
-    Ltu(Value, Value),        // unsigned
+    Ltu(Value, Value), // unsigned
     Geu(Value, Value),
 
     // unary
     Neg(Value),
-    Not(Value),               // bitwise not
+    Not(Value), // bitwise not
 
     // memory
-    Load(Value, IrType),      // load from address
-    Store(Value, Value),      // store(addr, val)
+    Load(Value, IrType), // load from address
+    Store(Value, Value), // store(addr, val)
 
     // volatile MMIO — never optimized away
     VolatileLoad(Value, IrType),
@@ -91,7 +91,7 @@ pub enum Op {
     Trunc(Value, IrType),
 
     // stack allocation (returns pointer)
-    StackAlloc(u32),          // size in bytes
+    StackAlloc(u32), // size in bytes
 
     // get address of global/static
     GlobalAddr(String),
@@ -153,7 +153,9 @@ impl Function {
 
     pub fn push_inst(&mut self, block: Block, op: Op, ty: IrType) -> Value {
         let val = self.new_value(ty, None);
-        self.blocks[block.0 as usize].insts.push(Inst { result: val, op });
+        self.blocks[block.0 as usize]
+            .insts
+            .push(Inst { result: val, op });
         val
     }
 
@@ -173,7 +175,9 @@ impl std::fmt::Display for Function {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "fn {}(", self.name)?;
         for (i, (name, ty)) in self.params.iter().enumerate() {
-            if i > 0 { write!(f, ", ")?; }
+            if i > 0 {
+                write!(f, ", ")?;
+            }
             write!(f, "{}: {:?}", name, ty)?;
         }
         writeln!(f, ") -> {:?} {{", self.ret_type)?;
@@ -181,7 +185,9 @@ impl std::fmt::Display for Function {
         for (bi, block) in self.blocks.iter().enumerate() {
             write!(f, "  b{}(", bi)?;
             for (i, (val, ty)) in block.params.iter().enumerate() {
-                if i > 0 { write!(f, ", ")?; }
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
                 write!(f, "v{}: {:?}", val.0, ty)?;
             }
             writeln!(f, "):")?;

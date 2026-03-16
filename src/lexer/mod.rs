@@ -180,9 +180,7 @@ impl<'src> Lexer<'src> {
             }
             let text = std::str::from_utf8(&self.src[start as usize..self.pos as usize]).unwrap();
             let clean: String = text.chars().filter(|c| *c != '_').collect();
-            let val: f64 = clean
-                .parse()
-                .map_err(|_| LexError::InvalidNumber(start))?;
+            let val: f64 = clean.parse().map_err(|_| LexError::InvalidNumber(start))?;
             return Ok(Token {
                 kind: TokenKind::FloatLit(val),
                 span: Span::new(start, self.pos),
@@ -191,9 +189,7 @@ impl<'src> Lexer<'src> {
 
         let text = std::str::from_utf8(&self.src[start as usize..self.pos as usize]).unwrap();
         let clean: String = text.chars().filter(|c| *c != '_').collect();
-        let val: u64 = clean
-            .parse()
-            .map_err(|_| LexError::InvalidNumber(start))?;
+        let val: u64 = clean.parse().map_err(|_| LexError::InvalidNumber(start))?;
         Ok(Token {
             kind: TokenKind::IntLit(val),
             span: Span::new(start, self.pos),
@@ -570,8 +566,8 @@ mod tests {
 
     #[test]
     fn lex_function() {
-        let tokens = Lexer::tokenize("fn main(b: &mut esp32c3) { let led = b.gpio.pin(2); }")
-            .unwrap();
+        let tokens =
+            Lexer::tokenize("fn main(b: &mut esp32c3) { let led = b.gpio.pin(2); }").unwrap();
 
         assert!(matches!(tokens[0].kind, TokenKind::Fn));
         assert!(matches!(tokens[1].kind, TokenKind::Ident(ref s) if s == "main"));
@@ -657,8 +653,7 @@ mod tests {
 
     #[test]
     fn lex_interrupt_annotation() {
-        let tokens =
-            Lexer::tokenize("interrupt(timer0, priority = 2) fn on_tick() {}").unwrap();
+        let tokens = Lexer::tokenize("interrupt(timer0, priority = 2) fn on_tick() {}").unwrap();
 
         assert!(matches!(tokens[0].kind, TokenKind::Interrupt));
         assert!(matches!(tokens[1].kind, TokenKind::LParen));

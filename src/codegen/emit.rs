@@ -13,8 +13,8 @@ struct Fixup {
 }
 
 enum FixupKind {
-    Branch,  // B-type, ±4KB
-    Jump,    // J-type, ±1MB
+    Branch, // B-type, ±4KB
+    Jump,   // J-type, ±1MB
 }
 
 impl Emitter {
@@ -74,20 +74,25 @@ impl Emitter {
 
             // read the existing instruction
             let mut inst = u32::from_le_bytes([
-                self.code[idx], self.code[idx + 1],
-                self.code[idx + 2], self.code[idx + 3],
+                self.code[idx],
+                self.code[idx + 1],
+                self.code[idx + 2],
+                self.code[idx + 3],
             ]);
 
             match fixup.kind {
                 FixupKind::Branch => {
-                    if offset < -4096 || offset > 4095 {
-                        return Err(format!("branch to {} out of range: {}", fixup.target, offset));
+                    if !(-4096..=4095).contains(&offset) {
+                        return Err(format!(
+                            "branch to {} out of range: {}",
+                            fixup.target, offset
+                        ));
                     }
                     // patch B-type immediate bits
                     inst = patch_b_imm(inst, offset);
                 }
                 FixupKind::Jump => {
-                    if offset < -1048576 || offset > 1048575 {
+                    if !(-1048576..=1048575).contains(&offset) {
                         return Err(format!("jump to {} out of range: {}", fixup.target, offset));
                     }
                     // patch J-type immediate bits

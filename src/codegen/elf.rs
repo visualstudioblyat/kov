@@ -72,7 +72,10 @@ mod tests {
 
         assert_eq!(&elf[0..4], &ELF_MAGIC);
         assert_eq!(u16::from_le_bytes([elf[18], elf[19]]), EM_RISCV);
-        assert_eq!(u32::from_le_bytes([elf[24], elf[25], elf[26], elf[27]]), 0x0800_0000);
+        assert_eq!(
+            u32::from_le_bytes([elf[24], elf[25], elf[26], elf[27]]),
+            0x0800_0000
+        );
     }
 
     #[test]

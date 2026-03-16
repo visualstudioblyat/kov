@@ -6,10 +6,10 @@
 pub enum IrType {
     I8,
     I16,
-    I32,   // default for rv32
+    I32, // default for rv32
     I64,
-    Bool,  // i1, lowered to i32 in codegen
-    Ptr,   // pointer-width integer (i32 on rv32)
+    Bool, // i1, lowered to i32 in codegen
+    Ptr,  // pointer-width integer (i32 on rv32)
     Void,
 }
 

@@ -1,12 +1,13 @@
 #![allow(dead_code)]
+#![allow(clippy::enum_variant_names, clippy::collapsible_if)]
 
-mod lexer;
-mod parser;
-mod types;
-mod ir;
 mod codegen;
 mod emu;
 mod errors;
+mod ir;
+mod lexer;
+mod parser;
+mod types;
 
 use std::process;
 use std::time::Instant;
@@ -63,20 +64,34 @@ fn compile(source: &str) -> CompileResult {
     }
 
     let board_name = program.items.iter().find_map(|item| {
-        if let parser::ast::TopItem::Board(b) = item { Some(b.name.clone()) } else { None }
+        if let parser::ast::TopItem::Board(b) = item {
+            Some(b.name.clone())
+        } else {
+            None
+        }
     });
 
-    let interrupts: Vec<(String, String)> = program.items.iter().filter_map(|item| {
-        if let parser::ast::TopItem::Interrupt(i) = item {
-            Some((i.interrupt_name.clone(), i.fn_name.clone()))
-        } else { None }
-    }).collect();
+    let interrupts: Vec<(String, String)> = program
+        .items
+        .iter()
+        .filter_map(|item| {
+            if let parser::ast::TopItem::Interrupt(i) = item {
+                Some((i.interrupt_name.clone(), i.fn_name.clone()))
+            } else {
+                None
+            }
+        })
+        .collect();
 
-    let board_config = board_name.as_deref()
+    let board_config = board_name
+        .as_deref()
         .and_then(codegen::startup::BoardConfig::from_name);
 
     let ir_result = ir::lower::Lowering::lower(&program);
-    let ram_base = board_config.as_ref().map(|b| b.ram_start).unwrap_or(0x2000_0000);
+    let ram_base = board_config
+        .as_ref()
+        .map(|b| b.ram_start)
+        .unwrap_or(0x2000_0000);
     let mut cg = codegen::CodeGen::new_with_globals(ram_base, &ir_result.globals);
 
     if let Some(ref board) = board_config {
@@ -97,9 +112,18 @@ fn compile(source: &str) -> CompileResult {
 
     CompileResult {
         code,
-        flash_base: board_config.as_ref().map(|b| b.flash_start).unwrap_or(0x0800_0000),
-        ram_base: board_config.as_ref().map(|b| b.ram_start).unwrap_or(0x2000_0000),
-        ram_top: board_config.as_ref().map(|b| b.stack_top()).unwrap_or(0x2000_8000),
+        flash_base: board_config
+            .as_ref()
+            .map(|b| b.flash_start)
+            .unwrap_or(0x0800_0000),
+        ram_base: board_config
+            .as_ref()
+            .map(|b| b.ram_start)
+            .unwrap_or(0x2000_0000),
+        ram_top: board_config
+            .as_ref()
+            .map(|b| b.stack_top())
+            .unwrap_or(0x2000_8000),
         elapsed: start.elapsed(),
     }
 }
@@ -142,7 +166,12 @@ fn cmd_build(args: &[String]) {
         die(&format!("cannot write {output}: {e}"));
     }
 
-    eprintln!("  compiled: {} → {} ({} bytes)", input, output, binary.len());
+    eprintln!(
+        "  compiled: {} → {} ({} bytes)",
+        input,
+        output,
+        binary.len()
+    );
     eprintln!("  code:     {} bytes", result.code.len());
     eprintln!("  time:     {:.1}ms", result.elapsed.as_secs_f64() * 1000.0);
 }
@@ -161,7 +190,11 @@ fn cmd_run(args: &[String]) {
     let source = read_file(input);
     let result = compile(&source);
 
-    eprintln!("  compiled: {} bytes in {:.1}ms", result.code.len(), result.elapsed.as_secs_f64() * 1000.0);
+    eprintln!(
+        "  compiled: {} bytes in {:.1}ms",
+        result.code.len(),
+        result.elapsed.as_secs_f64() * 1000.0
+    );
 
     let mut cpu = emu::Cpu::with_memory(result.flash_base, result.flash_base, result.ram_base);
     cpu.mem.load_flash(&result.code);
@@ -171,7 +204,11 @@ fn cmd_run(args: &[String]) {
     cpu.run(max_cycles);
     let exec_time = exec_start.elapsed();
 
-    eprintln!("  executed: {} cycles in {:.1}ms", cpu.cycles, exec_time.as_secs_f64() * 1000.0);
+    eprintln!(
+        "  executed: {} cycles in {:.1}ms",
+        cpu.cycles,
+        exec_time.as_secs_f64() * 1000.0
+    );
     eprintln!("  halted:   {}", cpu.halted);
 
     // print MMIO activity
@@ -203,8 +240,17 @@ fn cmd_run(args: &[String]) {
     eprintln!();
     eprintln!("  registers:");
     for i in (0..32).step_by(4) {
-        eprintln!("    x{:<2}={:#010X}  x{:<2}={:#010X}  x{:<2}={:#010X}  x{:<2}={:#010X}",
-            i, cpu.regs[i], i+1, cpu.regs[i+1], i+2, cpu.regs[i+2], i+3, cpu.regs[i+3]);
+        eprintln!(
+            "    x{:<2}={:#010X}  x{:<2}={:#010X}  x{:<2}={:#010X}  x{:<2}={:#010X}",
+            i,
+            cpu.regs[i],
+            i + 1,
+            cpu.regs[i + 1],
+            i + 2,
+            cpu.regs[i + 2],
+            i + 3,
+            cpu.regs[i + 3]
+        );
     }
 }
 

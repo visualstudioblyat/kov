@@ -2,17 +2,17 @@
 // Each function packs fields into a 32-bit little-endian instruction word.
 
 // register aliases
-pub const ZERO: u32 = 0;  // x0, hardwired zero
-pub const RA: u32 = 1;    // return address
-pub const SP: u32 = 2;    // stack pointer
-pub const GP: u32 = 3;    // global pointer
-pub const TP: u32 = 4;    // thread pointer
+pub const ZERO: u32 = 0; // x0, hardwired zero
+pub const RA: u32 = 1; // return address
+pub const SP: u32 = 2; // stack pointer
+pub const GP: u32 = 3; // global pointer
+pub const TP: u32 = 4; // thread pointer
 pub const T0: u32 = 5;
 pub const T1: u32 = 6;
 pub const T2: u32 = 7;
-pub const S0: u32 = 8;    // frame pointer
+pub const S0: u32 = 8; // frame pointer
 pub const S1: u32 = 9;
-pub const A0: u32 = 10;   // arg 0 / return value
+pub const A0: u32 = 10; // arg 0 / return value
 pub const A1: u32 = 11;
 pub const A2: u32 = 12;
 pub const A3: u32 = 13;
@@ -34,7 +34,12 @@ fn i(opcode: u32, rd: u32, funct3: u32, rs1: u32, imm: i32) -> u32 {
 // S-type: store
 fn s(opcode: u32, funct3: u32, rs1: u32, rs2: u32, imm: i32) -> u32 {
     let imm = (imm as u32) & 0xFFF;
-    opcode | ((imm & 0x1F) << 7) | (funct3 << 12) | (rs1 << 15) | (rs2 << 20) | (((imm >> 5) & 0x7F) << 25)
+    opcode
+        | ((imm & 0x1F) << 7)
+        | (funct3 << 12)
+        | (rs1 << 15)
+        | (rs2 << 20)
+        | (((imm >> 5) & 0x7F) << 25)
 }
 
 // B-type: branch (offset is byte offset from branch instruction, must be even)
@@ -44,7 +49,14 @@ fn b(opcode: u32, funct3: u32, rs1: u32, rs2: u32, imm: i32) -> u32 {
     let b11 = (imm >> 11) & 1;
     let b10_5 = (imm >> 5) & 0x3F;
     let b4_1 = (imm >> 1) & 0xF;
-    opcode | (b11 << 7) | (b4_1 << 8) | (funct3 << 12) | (rs1 << 15) | (rs2 << 20) | (b10_5 << 25) | (b12 << 31)
+    opcode
+        | (b11 << 7)
+        | (b4_1 << 8)
+        | (funct3 << 12)
+        | (rs1 << 15)
+        | (rs2 << 20)
+        | (b10_5 << 25)
+        | (b12 << 31)
 }
 
 // U-type: upper immediate
@@ -64,100 +76,220 @@ fn j(opcode: u32, rd: u32, imm: i32) -> u32 {
 
 // ── arithmetic ──
 
-pub fn add(rd: u32, rs1: u32, rs2: u32) -> u32 { r(0x33, rd, 0, rs1, rs2, 0x00) }
-pub fn sub(rd: u32, rs1: u32, rs2: u32) -> u32 { r(0x33, rd, 0, rs1, rs2, 0x20) }
-pub fn and(rd: u32, rs1: u32, rs2: u32) -> u32 { r(0x33, rd, 7, rs1, rs2, 0x00) }
-pub fn or(rd: u32, rs1: u32, rs2: u32) -> u32  { r(0x33, rd, 6, rs1, rs2, 0x00) }
-pub fn xor(rd: u32, rs1: u32, rs2: u32) -> u32 { r(0x33, rd, 4, rs1, rs2, 0x00) }
-pub fn sll(rd: u32, rs1: u32, rs2: u32) -> u32 { r(0x33, rd, 1, rs1, rs2, 0x00) }
-pub fn srl(rd: u32, rs1: u32, rs2: u32) -> u32 { r(0x33, rd, 5, rs1, rs2, 0x00) }
-pub fn sra(rd: u32, rs1: u32, rs2: u32) -> u32 { r(0x33, rd, 5, rs1, rs2, 0x20) }
-pub fn slt(rd: u32, rs1: u32, rs2: u32) -> u32 { r(0x33, rd, 2, rs1, rs2, 0x00) }
-pub fn sltu(rd: u32, rs1: u32, rs2: u32) -> u32 { r(0x33, rd, 3, rs1, rs2, 0x00) }
+pub fn add(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    r(0x33, rd, 0, rs1, rs2, 0x00)
+}
+pub fn sub(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    r(0x33, rd, 0, rs1, rs2, 0x20)
+}
+pub fn and(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    r(0x33, rd, 7, rs1, rs2, 0x00)
+}
+pub fn or(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    r(0x33, rd, 6, rs1, rs2, 0x00)
+}
+pub fn xor(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    r(0x33, rd, 4, rs1, rs2, 0x00)
+}
+pub fn sll(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    r(0x33, rd, 1, rs1, rs2, 0x00)
+}
+pub fn srl(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    r(0x33, rd, 5, rs1, rs2, 0x00)
+}
+pub fn sra(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    r(0x33, rd, 5, rs1, rs2, 0x20)
+}
+pub fn slt(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    r(0x33, rd, 2, rs1, rs2, 0x00)
+}
+pub fn sltu(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    r(0x33, rd, 3, rs1, rs2, 0x00)
+}
 
 // M extension
-pub fn mul(rd: u32, rs1: u32, rs2: u32) -> u32  { r(0x33, rd, 0, rs1, rs2, 0x01) }
-pub fn div(rd: u32, rs1: u32, rs2: u32) -> u32  { r(0x33, rd, 4, rs1, rs2, 0x01) }
-pub fn divu(rd: u32, rs1: u32, rs2: u32) -> u32 { r(0x33, rd, 5, rs1, rs2, 0x01) }
-pub fn rem_(rd: u32, rs1: u32, rs2: u32) -> u32 { r(0x33, rd, 6, rs1, rs2, 0x01) }
-pub fn remu(rd: u32, rs1: u32, rs2: u32) -> u32 { r(0x33, rd, 7, rs1, rs2, 0x01) }
+pub fn mul(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    r(0x33, rd, 0, rs1, rs2, 0x01)
+}
+pub fn div(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    r(0x33, rd, 4, rs1, rs2, 0x01)
+}
+pub fn divu(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    r(0x33, rd, 5, rs1, rs2, 0x01)
+}
+pub fn rem_(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    r(0x33, rd, 6, rs1, rs2, 0x01)
+}
+pub fn remu(rd: u32, rs1: u32, rs2: u32) -> u32 {
+    r(0x33, rd, 7, rs1, rs2, 0x01)
+}
 
 // ── immediate arithmetic ──
 
-pub fn addi(rd: u32, rs1: u32, imm: i32) -> u32  { i(0x13, rd, 0, rs1, imm) }
-pub fn andi(rd: u32, rs1: u32, imm: i32) -> u32  { i(0x13, rd, 7, rs1, imm) }
-pub fn ori(rd: u32, rs1: u32, imm: i32) -> u32   { i(0x13, rd, 6, rs1, imm) }
-pub fn xori(rd: u32, rs1: u32, imm: i32) -> u32  { i(0x13, rd, 4, rs1, imm) }
-pub fn slti(rd: u32, rs1: u32, imm: i32) -> u32  { i(0x13, rd, 2, rs1, imm) }
-pub fn sltiu(rd: u32, rs1: u32, imm: i32) -> u32 { i(0x13, rd, 3, rs1, imm) }
-pub fn slli(rd: u32, rs1: u32, shamt: u32) -> u32 { i(0x13, rd, 1, rs1, shamt as i32) }
-pub fn srli(rd: u32, rs1: u32, shamt: u32) -> u32 { i(0x13, rd, 5, rs1, shamt as i32) }
-pub fn srai(rd: u32, rs1: u32, shamt: u32) -> u32 { i(0x13, rd, 5, rs1, (0x400 | shamt) as i32) }
+pub fn addi(rd: u32, rs1: u32, imm: i32) -> u32 {
+    i(0x13, rd, 0, rs1, imm)
+}
+pub fn andi(rd: u32, rs1: u32, imm: i32) -> u32 {
+    i(0x13, rd, 7, rs1, imm)
+}
+pub fn ori(rd: u32, rs1: u32, imm: i32) -> u32 {
+    i(0x13, rd, 6, rs1, imm)
+}
+pub fn xori(rd: u32, rs1: u32, imm: i32) -> u32 {
+    i(0x13, rd, 4, rs1, imm)
+}
+pub fn slti(rd: u32, rs1: u32, imm: i32) -> u32 {
+    i(0x13, rd, 2, rs1, imm)
+}
+pub fn sltiu(rd: u32, rs1: u32, imm: i32) -> u32 {
+    i(0x13, rd, 3, rs1, imm)
+}
+pub fn slli(rd: u32, rs1: u32, shamt: u32) -> u32 {
+    i(0x13, rd, 1, rs1, shamt as i32)
+}
+pub fn srli(rd: u32, rs1: u32, shamt: u32) -> u32 {
+    i(0x13, rd, 5, rs1, shamt as i32)
+}
+pub fn srai(rd: u32, rs1: u32, shamt: u32) -> u32 {
+    i(0x13, rd, 5, rs1, (0x400 | shamt) as i32)
+}
 
 // ── loads ──
 
-pub fn lb(rd: u32, rs1: u32, offset: i32) -> u32  { i(0x03, rd, 0, rs1, offset) }
-pub fn lh(rd: u32, rs1: u32, offset: i32) -> u32  { i(0x03, rd, 1, rs1, offset) }
-pub fn lw(rd: u32, rs1: u32, offset: i32) -> u32  { i(0x03, rd, 2, rs1, offset) }
-pub fn lbu(rd: u32, rs1: u32, offset: i32) -> u32 { i(0x03, rd, 4, rs1, offset) }
-pub fn lhu(rd: u32, rs1: u32, offset: i32) -> u32 { i(0x03, rd, 5, rs1, offset) }
+pub fn lb(rd: u32, rs1: u32, offset: i32) -> u32 {
+    i(0x03, rd, 0, rs1, offset)
+}
+pub fn lh(rd: u32, rs1: u32, offset: i32) -> u32 {
+    i(0x03, rd, 1, rs1, offset)
+}
+pub fn lw(rd: u32, rs1: u32, offset: i32) -> u32 {
+    i(0x03, rd, 2, rs1, offset)
+}
+pub fn lbu(rd: u32, rs1: u32, offset: i32) -> u32 {
+    i(0x03, rd, 4, rs1, offset)
+}
+pub fn lhu(rd: u32, rs1: u32, offset: i32) -> u32 {
+    i(0x03, rd, 5, rs1, offset)
+}
 
 // ── stores ──
 
-pub fn sb(rs1: u32, rs2: u32, offset: i32) -> u32 { s(0x23, 0, rs1, rs2, offset) }
-pub fn sh(rs1: u32, rs2: u32, offset: i32) -> u32 { s(0x23, 1, rs1, rs2, offset) }
-pub fn sw(rs1: u32, rs2: u32, offset: i32) -> u32 { s(0x23, 2, rs1, rs2, offset) }
+pub fn sb(rs1: u32, rs2: u32, offset: i32) -> u32 {
+    s(0x23, 0, rs1, rs2, offset)
+}
+pub fn sh(rs1: u32, rs2: u32, offset: i32) -> u32 {
+    s(0x23, 1, rs1, rs2, offset)
+}
+pub fn sw(rs1: u32, rs2: u32, offset: i32) -> u32 {
+    s(0x23, 2, rs1, rs2, offset)
+}
 
 // ── branches ──
 
-pub fn beq(rs1: u32, rs2: u32, offset: i32) -> u32  { b(0x63, 0, rs1, rs2, offset) }
-pub fn bne(rs1: u32, rs2: u32, offset: i32) -> u32  { b(0x63, 1, rs1, rs2, offset) }
-pub fn blt(rs1: u32, rs2: u32, offset: i32) -> u32  { b(0x63, 4, rs1, rs2, offset) }
-pub fn bge(rs1: u32, rs2: u32, offset: i32) -> u32  { b(0x63, 5, rs1, rs2, offset) }
-pub fn bltu(rs1: u32, rs2: u32, offset: i32) -> u32 { b(0x63, 6, rs1, rs2, offset) }
-pub fn bgeu(rs1: u32, rs2: u32, offset: i32) -> u32 { b(0x63, 7, rs1, rs2, offset) }
+pub fn beq(rs1: u32, rs2: u32, offset: i32) -> u32 {
+    b(0x63, 0, rs1, rs2, offset)
+}
+pub fn bne(rs1: u32, rs2: u32, offset: i32) -> u32 {
+    b(0x63, 1, rs1, rs2, offset)
+}
+pub fn blt(rs1: u32, rs2: u32, offset: i32) -> u32 {
+    b(0x63, 4, rs1, rs2, offset)
+}
+pub fn bge(rs1: u32, rs2: u32, offset: i32) -> u32 {
+    b(0x63, 5, rs1, rs2, offset)
+}
+pub fn bltu(rs1: u32, rs2: u32, offset: i32) -> u32 {
+    b(0x63, 6, rs1, rs2, offset)
+}
+pub fn bgeu(rs1: u32, rs2: u32, offset: i32) -> u32 {
+    b(0x63, 7, rs1, rs2, offset)
+}
 
 // ── jumps ──
 
-pub fn jal(rd: u32, offset: i32) -> u32 { j(0x6F, rd, offset) }
-pub fn jalr(rd: u32, rs1: u32, offset: i32) -> u32 { i(0x67, rd, 0, rs1, offset) }
+pub fn jal(rd: u32, offset: i32) -> u32 {
+    j(0x6F, rd, offset)
+}
+pub fn jalr(rd: u32, rs1: u32, offset: i32) -> u32 {
+    i(0x67, rd, 0, rs1, offset)
+}
 
 // ── upper immediate ──
 
-pub fn lui(rd: u32, imm: u32) -> u32   { u_type(0x37, rd, imm) }
-pub fn auipc(rd: u32, imm: u32) -> u32 { u_type(0x17, rd, imm) }
+pub fn lui(rd: u32, imm: u32) -> u32 {
+    u_type(0x37, rd, imm)
+}
+pub fn auipc(rd: u32, imm: u32) -> u32 {
+    u_type(0x17, rd, imm)
+}
 
 // ── system ──
 
-pub fn ecall() -> u32  { i(0x73, 0, 0, 0, 0) }
-pub fn ebreak() -> u32 { i(0x73, 0, 0, 0, 1) }
+pub fn ecall() -> u32 {
+    i(0x73, 0, 0, 0, 0)
+}
+pub fn ebreak() -> u32 {
+    i(0x73, 0, 0, 0, 1)
+}
 
 // CSR instructions
-pub fn csrrw(rd: u32, csr: u32, rs1: u32) -> u32  { i(0x73, rd, 1, rs1, csr as i32) }
-pub fn csrrs(rd: u32, csr: u32, rs1: u32) -> u32  { i(0x73, rd, 2, rs1, csr as i32) }
-pub fn csrrc(rd: u32, csr: u32, rs1: u32) -> u32  { i(0x73, rd, 3, rs1, csr as i32) }
-pub fn csrrwi(rd: u32, csr: u32, imm: u32) -> u32 { i(0x73, rd, 5, imm, csr as i32) }
-pub fn csrrsi(rd: u32, csr: u32, imm: u32) -> u32 { i(0x73, rd, 6, imm, csr as i32) }
-pub fn csrrci(rd: u32, csr: u32, imm: u32) -> u32 { i(0x73, rd, 7, imm, csr as i32) }
+pub fn csrrw(rd: u32, csr: u32, rs1: u32) -> u32 {
+    i(0x73, rd, 1, rs1, csr as i32)
+}
+pub fn csrrs(rd: u32, csr: u32, rs1: u32) -> u32 {
+    i(0x73, rd, 2, rs1, csr as i32)
+}
+pub fn csrrc(rd: u32, csr: u32, rs1: u32) -> u32 {
+    i(0x73, rd, 3, rs1, csr as i32)
+}
+pub fn csrrwi(rd: u32, csr: u32, imm: u32) -> u32 {
+    i(0x73, rd, 5, imm, csr as i32)
+}
+pub fn csrrsi(rd: u32, csr: u32, imm: u32) -> u32 {
+    i(0x73, rd, 6, imm, csr as i32)
+}
+pub fn csrrci(rd: u32, csr: u32, imm: u32) -> u32 {
+    i(0x73, rd, 7, imm, csr as i32)
+}
 
-pub fn wfi() -> u32 { i(0x73, 0, 0, 0, 0x105) }
-pub fn mret() -> u32 { i(0x73, 0, 0, 0, 0x302) }
+pub fn wfi() -> u32 {
+    i(0x73, 0, 0, 0, 0x105)
+}
+pub fn mret() -> u32 {
+    i(0x73, 0, 0, 0, 0x302)
+}
 
 // ── pseudo-instructions ──
 
-pub fn nop() -> u32 { addi(ZERO, ZERO, 0) }
-pub fn mv(rd: u32, rs1: u32) -> u32 { addi(rd, rs1, 0) }
-pub fn li(rd: u32, imm: i32) -> u32 { addi(rd, ZERO, imm) } // only for -2048..2047
-pub fn not(rd: u32, rs1: u32) -> u32 { xori(rd, rs1, -1) }
-pub fn neg(rd: u32, rs1: u32) -> u32 { sub(rd, ZERO, rs1) }
-pub fn ret() -> u32 { jalr(ZERO, RA, 0) }
-pub fn call_offset(offset: i32) -> u32 { jal(RA, offset) }
-pub fn j_offset(offset: i32) -> u32 { jal(ZERO, offset) }
+pub fn nop() -> u32 {
+    addi(ZERO, ZERO, 0)
+}
+pub fn mv(rd: u32, rs1: u32) -> u32 {
+    addi(rd, rs1, 0)
+}
+pub fn li(rd: u32, imm: i32) -> u32 {
+    addi(rd, ZERO, imm)
+} // only for -2048..2047
+pub fn not(rd: u32, rs1: u32) -> u32 {
+    xori(rd, rs1, -1)
+}
+pub fn neg(rd: u32, rs1: u32) -> u32 {
+    sub(rd, ZERO, rs1)
+}
+pub fn ret() -> u32 {
+    jalr(ZERO, RA, 0)
+}
+pub fn call_offset(offset: i32) -> u32 {
+    jal(RA, offset)
+}
+pub fn j_offset(offset: i32) -> u32 {
+    jal(ZERO, offset)
+}
 
 // load 32-bit immediate — returns (lui_inst, addi_inst) or just (addi_inst, nop)
 pub fn li32(rd: u32, value: i32) -> (u32, Option<u32>) {
     // fits in 12-bit signed immediate
-    if value >= -2048 && value < 2048 {
+    if (-2048..2048).contains(&value) {
         return (addi(rd, ZERO, value), None);
     }
 

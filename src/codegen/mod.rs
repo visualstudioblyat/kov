@@ -1,14 +1,14 @@
-pub mod encode;
-pub mod emit;
 pub mod elf;
-pub mod startup;
+pub mod emit;
+pub mod encode;
 pub mod mmio;
+pub mod startup;
 
-use std::collections::HashMap;
-use crate::ir::{Function, Value, Op, Terminator};
 use crate::ir::globals::GlobalTable;
+use crate::ir::{Function, Op, Terminator, Value};
 use emit::Emitter;
 use encode::*;
+use std::collections::HashMap;
 
 pub struct CodeGen {
     pub emitter: Emitter,
@@ -20,21 +20,23 @@ pub struct CodeGen {
 // uses t0-t6, a0-a7, s1-s11 (25 registers available).
 // spills to stack when exhausted.
 struct RegAlloc {
-    map: HashMap<u32, u32>,  // Value.0 → physical register
+    map: HashMap<u32, u32>, // Value.0 → physical register
     next: usize,
-    stack_offset: i32,       // current stack usage for spills
+    stack_offset: i32, // current stack usage for spills
 }
 
 // allocatable registers in priority order
 const REGS: &[u32] = &[
-    T0, T1, T2,
-    A0, A1, A2, A3, A4, A5, A6, A7,
-    S1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
+    T0, T1, T2, A0, A1, A2, A3, A4, A5, A6, A7, S1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 ];
 
 impl RegAlloc {
     fn new() -> Self {
-        Self { map: HashMap::new(), next: 0, stack_offset: 0 }
+        Self {
+            map: HashMap::new(),
+            next: 0,
+            stack_offset: 0,
+        }
     }
 
     fn get(&mut self, val: Value) -> u32 {
@@ -61,7 +63,11 @@ impl RegAlloc {
 
 impl CodeGen {
     pub fn new() -> Self {
-        Self { emitter: Emitter::new(), ram_base: 0x2000_0000, global_addrs: HashMap::new() }
+        Self {
+            emitter: Emitter::new(),
+            ram_base: 0x2000_0000,
+            global_addrs: HashMap::new(),
+        }
     }
 
     pub fn new_with_globals(ram_base: u32, globals: &GlobalTable) -> Self {
@@ -71,7 +77,11 @@ impl CodeGen {
                 global_addrs.insert(g.name.clone(), ram_base + offset);
             }
         }
-        Self { emitter: Emitter::new(), ram_base, global_addrs }
+        Self {
+            emitter: Emitter::new(),
+            ram_base,
+            global_addrs,
+        }
     }
 
     pub fn gen_function(&mut self, func: &Function) {
@@ -136,43 +146,73 @@ impl CodeGen {
                 self.emitter.emit32(addi(rd, ZERO, if *v { 1 } else { 0 }));
             }
 
-            Op::Add(a, b) => { self.emitter.emit32(add(rd, ra.get(*a), ra.get(*b))); }
-            Op::Sub(a, b) => { self.emitter.emit32(sub(rd, ra.get(*a), ra.get(*b))); }
-            Op::Mul(a, b) => { self.emitter.emit32(mul(rd, ra.get(*a), ra.get(*b))); }
-            Op::Div(a, b) => { self.emitter.emit32(div(rd, ra.get(*a), ra.get(*b))); }
-            Op::Rem(a, b) => { self.emitter.emit32(rem_(rd, ra.get(*a), ra.get(*b))); }
+            Op::Add(a, b) => {
+                self.emitter.emit32(add(rd, ra.get(*a), ra.get(*b)));
+            }
+            Op::Sub(a, b) => {
+                self.emitter.emit32(sub(rd, ra.get(*a), ra.get(*b)));
+            }
+            Op::Mul(a, b) => {
+                self.emitter.emit32(mul(rd, ra.get(*a), ra.get(*b)));
+            }
+            Op::Div(a, b) => {
+                self.emitter.emit32(div(rd, ra.get(*a), ra.get(*b)));
+            }
+            Op::Rem(a, b) => {
+                self.emitter.emit32(rem_(rd, ra.get(*a), ra.get(*b)));
+            }
 
-            Op::And(a, b) => { self.emitter.emit32(and(rd, ra.get(*a), ra.get(*b))); }
-            Op::Or(a, b)  => { self.emitter.emit32(or(rd, ra.get(*a), ra.get(*b))); }
-            Op::Xor(a, b) => { self.emitter.emit32(xor(rd, ra.get(*a), ra.get(*b))); }
-            Op::Shl(a, b) => { self.emitter.emit32(sll(rd, ra.get(*a), ra.get(*b))); }
-            Op::Shr(a, b) => { self.emitter.emit32(srl(rd, ra.get(*a), ra.get(*b))); }
-            Op::Sar(a, b) => { self.emitter.emit32(sra(rd, ra.get(*a), ra.get(*b))); }
+            Op::And(a, b) => {
+                self.emitter.emit32(and(rd, ra.get(*a), ra.get(*b)));
+            }
+            Op::Or(a, b) => {
+                self.emitter.emit32(or(rd, ra.get(*a), ra.get(*b)));
+            }
+            Op::Xor(a, b) => {
+                self.emitter.emit32(xor(rd, ra.get(*a), ra.get(*b)));
+            }
+            Op::Shl(a, b) => {
+                self.emitter.emit32(sll(rd, ra.get(*a), ra.get(*b)));
+            }
+            Op::Shr(a, b) => {
+                self.emitter.emit32(srl(rd, ra.get(*a), ra.get(*b)));
+            }
+            Op::Sar(a, b) => {
+                self.emitter.emit32(sra(rd, ra.get(*a), ra.get(*b)));
+            }
 
-            Op::Eq(a, b)  => {
+            Op::Eq(a, b) => {
                 // x == y → sub tmp, x, y; sltiu rd, tmp, 1
                 self.emitter.emit32(sub(rd, ra.get(*a), ra.get(*b)));
                 self.emitter.emit32(sltiu(rd, rd, 1));
             }
-            Op::Ne(a, b)  => {
+            Op::Ne(a, b) => {
                 // x != y → sub tmp, x, y; sltu rd, zero, tmp
                 self.emitter.emit32(sub(rd, ra.get(*a), ra.get(*b)));
                 self.emitter.emit32(sltu(rd, ZERO, rd));
             }
-            Op::Lt(a, b)  => { self.emitter.emit32(slt(rd, ra.get(*a), ra.get(*b))); }
-            Op::Ge(a, b)  => {
+            Op::Lt(a, b) => {
+                self.emitter.emit32(slt(rd, ra.get(*a), ra.get(*b)));
+            }
+            Op::Ge(a, b) => {
                 // x >= y → slt tmp, x, y; xori rd, tmp, 1
                 self.emitter.emit32(slt(rd, ra.get(*a), ra.get(*b)));
                 self.emitter.emit32(xori(rd, rd, 1));
             }
-            Op::Ltu(a, b) => { self.emitter.emit32(sltu(rd, ra.get(*a), ra.get(*b))); }
+            Op::Ltu(a, b) => {
+                self.emitter.emit32(sltu(rd, ra.get(*a), ra.get(*b)));
+            }
             Op::Geu(a, b) => {
                 self.emitter.emit32(sltu(rd, ra.get(*a), ra.get(*b)));
                 self.emitter.emit32(xori(rd, rd, 1));
             }
 
-            Op::Neg(a) => { self.emitter.emit32(neg(rd, ra.get(*a))); }
-            Op::Not(a) => { self.emitter.emit32(not(rd, ra.get(*a))); }
+            Op::Neg(a) => {
+                self.emitter.emit32(neg(rd, ra.get(*a)));
+            }
+            Op::Not(a) => {
+                self.emitter.emit32(not(rd, ra.get(*a)));
+            }
 
             Op::Load(addr, ty) => {
                 let a = ra.get(*addr);
@@ -236,7 +276,9 @@ impl CodeGen {
                 let addr = self.global_addrs.get(name).copied().unwrap_or(0) as i32;
                 let (inst1, inst2) = li32(rd, addr);
                 self.emitter.emit32(inst1);
-                if let Some(i2) = inst2 { self.emitter.emit32(i2); }
+                if let Some(i2) = inst2 {
+                    self.emitter.emit32(i2);
+                }
             }
 
             Op::Nop => {}
@@ -252,10 +294,12 @@ impl CodeGen {
                 if src != A0 {
                     self.emitter.emit32(mv(A0, src));
                 }
-                self.emitter.emit_jump(j_offset(0), &format!("{}.epilogue", fn_name));
+                self.emitter
+                    .emit_jump(j_offset(0), &format!("{}.epilogue", fn_name));
             }
             Terminator::Return(None) => {
-                self.emitter.emit_jump(j_offset(0), &format!("{}.epilogue", fn_name));
+                self.emitter
+                    .emit_jump(j_offset(0), &format!("{}.epilogue", fn_name));
             }
             Terminator::Jump(target, _args) => {
                 // move block args to target's registers
@@ -263,11 +307,17 @@ impl CodeGen {
                 let target_label = format!("{}.b{}", fn_name, target.0);
                 self.emitter.emit_jump(j_offset(0), &target_label);
             }
-            Terminator::BranchIf { cond, then_block, else_block, .. } => {
+            Terminator::BranchIf {
+                cond,
+                then_block,
+                else_block,
+                ..
+            } => {
                 let cond_reg = ra.get(*cond);
                 let then_label = format!("{}.b{}", fn_name, then_block.0);
                 let else_label = format!("{}.b{}", fn_name, else_block.0);
-                self.emitter.emit_branch(bne(cond_reg, ZERO, 0), &then_label);
+                self.emitter
+                    .emit_branch(bne(cond_reg, ZERO, 0), &then_label);
                 self.emitter.emit_jump(j_offset(0), &else_label);
             }
             Terminator::Unreachable => {
@@ -286,9 +336,9 @@ impl CodeGen {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ir::lower::Lowering;
     use crate::lexer::Lexer;
     use crate::parser::Parser;
-    use crate::ir::lower::Lowering;
 
     fn compile(src: &str) -> Vec<u8> {
         let tokens = Lexer::tokenize(src).unwrap();
@@ -349,7 +399,10 @@ mod tests {
         let code = cg.finish().unwrap();
 
         assert!(!code.is_empty());
-        println!("blink.kv compiled to {} bytes of RISC-V machine code", code.len());
+        println!(
+            "blink.kv compiled to {} bytes of RISC-V machine code",
+            code.len()
+        );
 
         // verify it's valid 32-bit aligned instructions
         assert_eq!(code.len() % 4, 0);
@@ -369,9 +422,8 @@ mod tests {
 
     #[test]
     fn codegen_global_read() {
-        let code = compile_with_globals(
-            "static mut counter: u32 = 0;\nfn get() u32 { return counter; }"
-        );
+        let code =
+            compile_with_globals("static mut counter: u32 = 0;\nfn get() u32 { return counter; }");
         assert!(!code.is_empty());
         assert_eq!(code.len() % 4, 0);
         // should contain a LW instruction (load from global address)
@@ -399,7 +451,7 @@ mod tests {
     #[test]
     fn codegen_global_increment_with_break() {
         let code = compile_with_globals(
-            "static mut ticks: u32 = 0;\nfn f() { loop { ticks = ticks + 1; if ticks == 10 { break; } } }"
+            "static mut ticks: u32 = 0;\nfn f() { loop { ticks = ticks + 1; if ticks == 10 { break; } } }",
         );
         assert!(!code.is_empty());
         assert_eq!(code.len() % 4, 0);
@@ -417,10 +469,16 @@ mod tests {
         assert!(!code.is_empty());
         assert_eq!(code.len() % 4, 0);
         // should have BNE instructions for branch chain
-        let bne_count = code.windows(4).filter(|w| {
-            let inst = u32::from_le_bytes([w[0], w[1], w[2], w[3]]);
-            inst & 0x707F == 0x1063 // BNE opcode
-        }).count();
-        assert!(bne_count >= 2, "match should emit BNE for each int pattern arm");
+        let bne_count = code
+            .windows(4)
+            .filter(|w| {
+                let inst = u32::from_le_bytes([w[0], w[1], w[2], w[3]]);
+                inst & 0x707F == 0x1063 // BNE opcode
+            })
+            .count();
+        assert!(
+            bne_count >= 2,
+            "match should emit BNE for each int pattern arm"
+        );
     }
 }

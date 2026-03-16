@@ -107,43 +107,43 @@ pub enum TokenKind {
     Underscore, // _
 
     // ── Operators ──
-    Plus,       // +
-    Minus,      // -
-    Star,       // *
-    Slash,      // /
-    Percent,    // %
-    Amp,        // &
-    Pipe,       // |
-    Caret,      // ^
-    Tilde,      // ~
-    Bang,       // !
-    Shl,        // <<
-    Shr,        // >>
+    Plus,    // +
+    Minus,   // -
+    Star,    // *
+    Slash,   // /
+    Percent, // %
+    Amp,     // &
+    Pipe,    // |
+    Caret,   // ^
+    Tilde,   // ~
+    Bang,    // !
+    Shl,     // <<
+    Shr,     // >>
 
     // ── Comparison ──
-    Eq,         // ==
-    Ne,         // !=
-    Lt,         // <
-    Gt,         // >
-    Le,         // <=
-    Ge,         // >=
+    Eq, // ==
+    Ne, // !=
+    Lt, // <
+    Gt, // >
+    Le, // <=
+    Ge, // >=
 
     // ── Logical ──
-    AmpAmp,     // &&
-    PipePipe,   // ||
+    AmpAmp,   // &&
+    PipePipe, // ||
 
     // ── Assignment ──
-    Assign,     // =
-    PlusEq,     // +=
-    MinusEq,    // -=
-    StarEq,     // *=
-    SlashEq,    // /=
-    PercentEq,  // %=
-    AmpEq,      // &=
-    PipeEq,     // |=
-    CaretEq,    // ^=
-    ShlEq,      // <<=
-    ShrEq,      // >>=
+    Assign,    // =
+    PlusEq,    // +=
+    MinusEq,   // -=
+    StarEq,    // *=
+    SlashEq,   // /=
+    PercentEq, // %=
+    AmpEq,     // &=
+    PipeEq,    // |=
+    CaretEq,   // ^=
+    ShlEq,     // <<=
+    ShrEq,     // >>=
 
     // ── Overflow operators ──
     WrapPlus,   // %+

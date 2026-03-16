@@ -24,11 +24,20 @@ pub struct GlobalTable {
 
 impl GlobalTable {
     pub fn new() -> Self {
-        Self { globals: Vec::new(), strings: Vec::new(), next_string: 0 }
+        Self {
+            globals: Vec::new(),
+            strings: Vec::new(),
+            next_string: 0,
+        }
     }
 
     pub fn add_global(&mut self, name: String, ty: IrType, init: GlobalInit, mutable: bool) {
-        self.globals.push(Global { name, ty, init, mutable });
+        self.globals.push(Global {
+            name,
+            ty,
+            init,
+            mutable,
+        });
     }
 
     pub fn add_string(&mut self, data: &[u8]) -> String {
@@ -44,16 +53,22 @@ impl GlobalTable {
 
     // compute total .data size (initialized globals)
     pub fn data_size(&self) -> u32 {
-        self.globals.iter()
+        self.globals
+            .iter()
             .filter(|g| !matches!(g.init, GlobalInit::Zero))
             .map(|g| g.ty.size_bytes())
             .sum::<u32>()
-            + self.strings.iter().map(|(_, d)| (d.len() as u32 + 3) & !3).sum::<u32>() // align to 4
+            + self
+                .strings
+                .iter()
+                .map(|(_, d)| (d.len() as u32 + 3) & !3)
+                .sum::<u32>() // align to 4
     }
 
     // compute total .bss size (zero-initialized globals)
     pub fn bss_size(&self) -> u32 {
-        self.globals.iter()
+        self.globals
+            .iter()
             .filter(|g| matches!(g.init, GlobalInit::Zero))
             .map(|g| g.ty.size_bytes())
             .sum()
@@ -69,14 +84,18 @@ impl GlobalTable {
                 GlobalInit::Bytes(b) => {
                     data.extend_from_slice(b);
                     // pad to 4-byte alignment
-                    while data.len() % 4 != 0 { data.push(0); }
+                    while data.len() % 4 != 0 {
+                        data.push(0);
+                    }
                 }
             }
         }
         for (_, bytes) in &self.strings {
             data.extend_from_slice(bytes);
             data.push(0); // null terminator
-            while data.len() % 4 != 0 { data.push(0); }
+            while data.len() % 4 != 0 {
+                data.push(0);
+            }
         }
         data
     }
@@ -86,7 +105,9 @@ impl GlobalTable {
         let mut offset = 0u32;
         for g in &self.globals {
             if !matches!(g.init, GlobalInit::Zero) {
-                if g.name == name { return Some(offset); }
+                if g.name == name {
+                    return Some(offset);
+                }
                 offset += g.ty.size_bytes();
             }
         }
@@ -95,7 +116,9 @@ impl GlobalTable {
         let mut bss_offset = 0u32;
         for g in &self.globals {
             if matches!(g.init, GlobalInit::Zero) {
-                if g.name == name { return Some(bss_start + bss_offset); }
+                if g.name == name {
+                    return Some(bss_start + bss_offset);
+                }
                 bss_offset += g.ty.size_bytes();
             }
         }
@@ -103,7 +126,9 @@ impl GlobalTable {
         // check strings
         let mut str_offset = after_bss;
         for (label, bytes) in &self.strings {
-            if label == name { return Some(str_offset); }
+            if label == name {
+                return Some(str_offset);
+            }
             str_offset += ((bytes.len() as u32 + 1) + 3) & !3;
         }
         None

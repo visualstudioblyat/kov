@@ -8,8 +8,10 @@ pub fn format_error(source: &str, span: Span, message: &str) -> String {
     format!(
         "error: {}\n  --> {}:{}\n   |\n{:>3}| {}\n   | {}{}\n",
         message,
-        line_num, col,
-        line_num, line_text,
+        line_num,
+        col,
+        line_num,
+        line_text,
         " ".repeat(col - 1),
         carets,
     )
@@ -21,7 +23,9 @@ fn locate(source: &str, byte_offset: u32) -> (usize, usize, &str) {
     let mut line_start = 0;
 
     for (i, ch) in source.char_indices() {
-        if i >= offset { break; }
+        if i >= offset {
+            break;
+        }
         if ch == '\n' {
             line_num += 1;
             line_start = i + 1;
@@ -29,7 +33,10 @@ fn locate(source: &str, byte_offset: u32) -> (usize, usize, &str) {
     }
 
     let col = offset - line_start + 1;
-    let line_end = source[line_start..].find('\n').map(|p| line_start + p).unwrap_or(source.len());
+    let line_end = source[line_start..]
+        .find('\n')
+        .map(|p| line_start + p)
+        .unwrap_or(source.len());
     let line_text = source[line_start..line_end].trim_end();
 
     (line_num, col, line_text)

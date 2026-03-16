@@ -51,14 +51,18 @@ pub fn emit_startup(emitter: &mut Emitter, board: &BoardConfig) {
     let sp_val = board.stack_top() as i32;
     let (inst1, inst2) = li32(SP, sp_val);
     emitter.emit32(inst1);
-    if let Some(i2) = inst2 { emitter.emit32(i2); }
+    if let Some(i2) = inst2 {
+        emitter.emit32(i2);
+    }
 
     // zero .bss — for now just zero 256 bytes at ram_start
     // (proper .bss bounds come from linker info later)
     let bss_start = board.ram_start as i32;
     let (b1, b2) = li32(T0, bss_start);
     emitter.emit32(b1);
-    if let Some(b) = b2 { emitter.emit32(b); }
+    if let Some(b) = b2 {
+        emitter.emit32(b);
+    }
 
     // t1 = bss_start + 256
     emitter.emit32(addi(T1, T0, 256));

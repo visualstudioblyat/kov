@@ -68,17 +68,24 @@ impl Memory {
     pub fn read32(&mut self, addr: u32) -> u32 {
         if let Some(off) = self.flash_offset(addr) {
             u32::from_le_bytes([
-                self.flash[off], self.flash[off + 1],
-                self.flash[off + 2], self.flash[off + 3],
+                self.flash[off],
+                self.flash[off + 1],
+                self.flash[off + 2],
+                self.flash[off + 3],
             ])
         } else if let Some(off) = self.ram_offset(addr) {
             u32::from_le_bytes([
-                self.ram[off], self.ram[off + 1],
-                self.ram[off + 2], self.ram[off + 3],
+                self.ram[off],
+                self.ram[off + 1],
+                self.ram[off + 2],
+                self.ram[off + 3],
             ])
         } else if self.is_mmio(addr) {
             self.mmio_log.push(MmioAccess {
-                address: addr, value: 0, width: 4, is_write: false,
+                address: addr,
+                value: 0,
+                width: 4,
+                is_write: false,
             });
             self.mmio_shadow.get(&addr).copied().unwrap_or(0)
         } else {
@@ -91,7 +98,10 @@ impl Memory {
             self.ram[off] = val;
         } else if self.is_mmio(addr) {
             self.mmio_log.push(MmioAccess {
-                address: addr, value: val as u32, width: 1, is_write: true,
+                address: addr,
+                value: val as u32,
+                width: 1,
+                is_write: true,
             });
             self.mmio_shadow.insert(addr, val as u32);
         }
@@ -107,7 +117,10 @@ impl Memory {
             self.ram[off..off + 4].copy_from_slice(&val.to_le_bytes());
         } else if self.is_mmio(addr) {
             self.mmio_log.push(MmioAccess {
-                address: addr, value: val, width: 4, is_write: true,
+                address: addr,
+                value: val,
+                width: 4,
+                is_write: true,
             });
             self.mmio_shadow.insert(addr, val);
         }

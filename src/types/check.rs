@@ -1,7 +1,7 @@
-use std::collections::{HashMap, HashSet};
-use crate::parser::ast::*;
-use crate::lexer::token::Span;
 use super::{Ty, TypeError};
+use crate::lexer::token::Span;
+use crate::parser::ast::*;
+use std::collections::{HashMap, HashSet};
 
 pub struct TypeChecker {
     errors: Vec<TypeError>,
@@ -52,7 +52,11 @@ impl TypeChecker {
             }
         }
 
-        if self.errors.is_empty() { Ok(()) } else { Err(self.errors) }
+        if self.errors.is_empty() {
+            Ok(())
+        } else {
+            Err(self.errors)
+        }
     }
 
     fn err(&mut self, span: Span, msg: String) {
@@ -65,7 +69,11 @@ impl TypeChecker {
     }
 
     fn register_struct(&mut self, s: &StructDef) {
-        let fields = s.fields.iter().map(|f| (f.name.clone(), Ty::from_ast(&f.ty))).collect();
+        let fields = s
+            .fields
+            .iter()
+            .map(|f| (f.name.clone(), Ty::from_ast(&f.ty)))
+            .collect();
         self.structs.insert(s.name.clone(), fields);
     }
 
@@ -97,7 +105,9 @@ impl TypeChecker {
             if let Ty::MutRef(inner) = &ty {
                 if let Ty::Named(name) = inner.as_ref() {
                     if self.board_peripherals.contains_key(name) {
-                        scope.vars.insert(param.name.clone(), Ty::Board(name.clone()));
+                        scope
+                            .vars
+                            .insert(param.name.clone(), Ty::Board(name.clone()));
                         continue;
                     }
                 }
@@ -116,16 +126,26 @@ impl TypeChecker {
 
     fn check_stmt(&mut self, stmt: &Stmt, scope: &mut FnScope) {
         match stmt {
-            Stmt::Let { name, ty, value, span, .. } => {
+            Stmt::Let {
+                name,
+                ty,
+                value,
+                span,
+                ..
+            } => {
                 let val_ty = self.check_expr(value, scope);
 
                 if let Some(declared) = ty {
                     let declared_ty = Ty::from_ast(declared);
-                    if val_ty != Ty::Unknown && declared_ty != Ty::Unknown && val_ty != declared_ty {
-                        self.err(*span, format!(
-                            "type mismatch: declared {} as {:?} but value is {:?}",
-                            name, declared_ty, val_ty
-                        ));
+                    if val_ty != Ty::Unknown && declared_ty != Ty::Unknown && val_ty != declared_ty
+                    {
+                        self.err(
+                            *span,
+                            format!(
+                                "type mismatch: declared {} as {:?} but value is {:?}",
+                                name, declared_ty, val_ty
+                            ),
+                        );
                     }
                 }
 
@@ -135,29 +155,47 @@ impl TypeChecker {
                 scope.vars.insert(name.clone(), val_ty);
             }
 
-            Stmt::Assign { target, value, span, .. } => {
+            Stmt::Assign {
+                target,
+                value,
+                span,
+                ..
+            } => {
                 let target_ty = self.check_expr(target, scope);
                 let val_ty = self.check_expr(value, scope);
                 if target_ty != Ty::Unknown && val_ty != Ty::Unknown && target_ty != val_ty {
-                    self.err(*span, format!(
-                        "cannot assign {:?} to {:?}", val_ty, target_ty
-                    ));
+                    self.err(
+                        *span,
+                        format!("cannot assign {:?} to {:?}", val_ty, target_ty),
+                    );
                 }
             }
 
             Stmt::Return(Some(expr), span) => {
                 let ty = self.check_expr(expr, scope);
                 if ty != Ty::Unknown && scope.ret_type != Ty::Unknown && ty != scope.ret_type {
-                    self.err(*span, format!(
-                        "return type mismatch: expected {:?}, got {:?}", scope.ret_type, ty
-                    ));
+                    self.err(
+                        *span,
+                        format!(
+                            "return type mismatch: expected {:?}, got {:?}",
+                            scope.ret_type, ty
+                        ),
+                    );
                 }
             }
 
-            Stmt::If { condition, then_block, else_block, span } => {
+            Stmt::If {
+                condition,
+                then_block,
+                else_block,
+                span,
+            } => {
                 let cond_ty = self.check_expr(condition, scope);
                 if cond_ty != Ty::Bool && cond_ty != Ty::Unknown {
-                    self.err(*span, format!("if condition must be bool, got {:?}", cond_ty));
+                    self.err(
+                        *span,
+                        format!("if condition must be bool, got {:?}", cond_ty),
+                    );
                 }
                 self.check_block(then_block, scope);
                 if let Some(eb) = else_block {
@@ -168,17 +206,30 @@ impl TypeChecker {
                 }
             }
 
-            Stmt::While { condition, body, span } => {
+            Stmt::While {
+                condition,
+                body,
+                span,
+            } => {
                 let cond_ty = self.check_expr(condition, scope);
                 if cond_ty != Ty::Bool && cond_ty != Ty::Unknown {
-                    self.err(*span, format!("while condition must be bool, got {:?}", cond_ty));
+                    self.err(
+                        *span,
+                        format!("while condition must be bool, got {:?}", cond_ty),
+                    );
                 }
                 self.check_block(body, scope);
             }
 
             Stmt::Loop(body, _) => self.check_block(body, scope),
 
-            Stmt::For { var, start, end, body, .. } => {
+            Stmt::For {
+                var,
+                start,
+                end,
+                body,
+                ..
+            } => {
                 let start_ty = self.check_expr(start, scope);
                 let end_ty = self.check_expr(end, scope);
                 if start_ty != Ty::Unknown && !start_ty.is_integer() {
@@ -191,7 +242,9 @@ impl TypeChecker {
                 self.check_block(body, scope);
             }
 
-            Stmt::Expr(expr) => { self.check_expr(expr, scope); }
+            Stmt::Expr(expr) => {
+                self.check_expr(expr, scope);
+            }
             _ => {}
         }
     }
@@ -242,9 +295,19 @@ impl TypeChecker {
                 let _rt = self.check_expr(rhs, scope);
 
                 match op {
-                    BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem
-                    | BinOp::BitAnd | BinOp::BitOr | BinOp::BitXor | BinOp::Shl | BinOp::Shr
-                    | BinOp::WrapAdd | BinOp::WrapSub | BinOp::WrapMul => {
+                    BinOp::Add
+                    | BinOp::Sub
+                    | BinOp::Mul
+                    | BinOp::Div
+                    | BinOp::Rem
+                    | BinOp::BitAnd
+                    | BinOp::BitOr
+                    | BinOp::BitXor
+                    | BinOp::Shl
+                    | BinOp::Shr
+                    | BinOp::WrapAdd
+                    | BinOp::WrapSub
+                    | BinOp::WrapMul => {
                         if lt != Ty::Unknown && !lt.is_numeric() {
                             self.err(*span, format!("arithmetic on non-numeric type {:?}", lt));
                         }
@@ -301,7 +364,9 @@ impl TypeChecker {
 
             Expr::MethodCall(obj, _method, args, _) => {
                 self.check_expr(obj, scope);
-                for arg in args { self.check_expr(arg, scope); }
+                for arg in args {
+                    self.check_expr(arg, scope);
+                }
                 Ty::Unknown // method return types need full resolution
             }
 
@@ -310,7 +375,9 @@ impl TypeChecker {
                 if !matches!(callee.as_ref(), Expr::Ident(_, _)) {
                     self.check_expr(callee, scope);
                 }
-                for arg in args { self.check_expr(arg, scope); }
+                for arg in args {
+                    self.check_expr(arg, scope);
+                }
                 Ty::Unknown
             }
 
@@ -423,7 +490,9 @@ mod tests {
     fn valid_blink() {
         let source = std::fs::read_to_string("examples/blink.kv").unwrap();
         if let Err(errors) = check(&source) {
-            for e in &errors { eprintln!("  {}", e); }
+            for e in &errors {
+                eprintln!("  {}", e);
+            }
             panic!("{} type errors", errors.len());
         }
     }

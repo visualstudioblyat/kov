@@ -131,30 +131,47 @@ pub struct Param {
 pub enum Type {
     Primitive(PrimitiveType),
     Named(String, Vec<Type>),
-    Array(Box<Type>, Box<Expr>),   // [T; N]
+    Array(Box<Type>, Box<Expr>),    // [T; N]
     Slice(Box<Type>),               // &[T]
     Ref(Box<Type>, bool),           // &T / &mut T
     Ptr(Box<Type>, Option<Region>), // *@flash T
     Register(Box<Type>, RegAccess), // Reg<u32, RW>
     Shared(Box<Type>),
-    Buffer(String),                 // Buffer<State>
-    Fixed(u64, u64),                // Fixed<I, F>
-    ErrorUnion(Box<Type>),          // !T
+    Buffer(String),        // Buffer<State>
+    Fixed(u64, u64),       // Fixed<I, F>
+    ErrorUnion(Box<Type>), // !T
     FnType(Vec<Type>, Option<Box<Type>>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PrimitiveType {
-    U8, U16, U32, U64,
-    I8, I16, I32, I64,
-    Bool, Usize, Isize, Void,
+    U8,
+    U16,
+    U32,
+    U64,
+    I8,
+    I16,
+    I32,
+    I64,
+    Bool,
+    Usize,
+    Isize,
+    Void,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum RegAccess { RO, WO, RW }
+pub enum RegAccess {
+    RO,
+    WO,
+    RW,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Region { Flash, Ram, Mmio }
+pub enum Region {
+    Flash,
+    Ram,
+    Mmio,
+}
 
 // ── statements ──
 
@@ -167,19 +184,54 @@ pub struct Block {
 
 #[derive(Debug, Clone)]
 pub enum Stmt {
-    Let { name: String, mutable: bool, ty: Option<Type>, value: Expr, span: Span },
-    Assign { target: Expr, op: AssignOp, value: Expr, span: Span },
+    Let {
+        name: String,
+        mutable: bool,
+        ty: Option<Type>,
+        value: Expr,
+        span: Span,
+    },
+    Assign {
+        target: Expr,
+        op: AssignOp,
+        value: Expr,
+        span: Span,
+    },
     Expr(Expr),
     Return(Option<Expr>, Span),
     Break(Span),
     Continue(Span),
     Defer(Box<Stmt>, Span),
-    If { condition: Expr, then_block: Block, else_block: Option<ElseBranch>, span: Span },
+    If {
+        condition: Expr,
+        then_block: Block,
+        else_block: Option<ElseBranch>,
+        span: Span,
+    },
     Loop(Block, Span),
-    While { condition: Expr, body: Block, span: Span },
-    For { var: String, start: Expr, end: Expr, bound: Option<u64>, body: Block, span: Span },
-    Match { expr: Expr, arms: Vec<MatchArm>, span: Span },
-    CriticalSection { token_name: String, body: Block, span: Span },
+    While {
+        condition: Expr,
+        body: Block,
+        span: Span,
+    },
+    For {
+        var: String,
+        start: Expr,
+        end: Expr,
+        bound: Option<u64>,
+        body: Block,
+        span: Span,
+    },
+    Match {
+        expr: Expr,
+        arms: Vec<MatchArm>,
+        span: Span,
+    },
+    CriticalSection {
+        token_name: String,
+        body: Block,
+        span: Span,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -190,8 +242,17 @@ pub enum ElseBranch {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum AssignOp {
-    Assign, PlusEq, MinusEq, StarEq, SlashEq, PercentEq,
-    AmpEq, PipeEq, CaretEq, ShlEq, ShrEq,
+    Assign,
+    PlusEq,
+    MinusEq,
+    StarEq,
+    SlashEq,
+    PercentEq,
+    AmpEq,
+    PipeEq,
+    CaretEq,
+    ShlEq,
+    ShrEq,
 }
 
 #[derive(Debug, Clone)]
@@ -237,12 +298,24 @@ pub enum Expr {
 impl Expr {
     pub fn span(&self) -> Span {
         match self {
-            Expr::IntLit(_, s) | Expr::FloatLit(_, s) | Expr::StringLit(_, s)
-            | Expr::CharLit(_, s) | Expr::BoolLit(_, s) | Expr::Ident(_, s)
-            | Expr::Binary(_, _, _, s) | Expr::Unary(_, _, s) | Expr::Field(_, _, s)
-            | Expr::MethodCall(_, _, _, s) | Expr::Call(_, _, s) | Expr::Index(_, _, s)
-            | Expr::Cast(_, _, s) | Expr::Try(_, s) | Expr::ArrayLit(_, s)
-            | Expr::StructLit(_, _, s) | Expr::DotEnum(_, s) | Expr::If(_, _, _, s) => *s,
+            Expr::IntLit(_, s)
+            | Expr::FloatLit(_, s)
+            | Expr::StringLit(_, s)
+            | Expr::CharLit(_, s)
+            | Expr::BoolLit(_, s)
+            | Expr::Ident(_, s)
+            | Expr::Binary(_, _, _, s)
+            | Expr::Unary(_, _, s)
+            | Expr::Field(_, _, s)
+            | Expr::MethodCall(_, _, _, s)
+            | Expr::Call(_, _, s)
+            | Expr::Index(_, _, s)
+            | Expr::Cast(_, _, s)
+            | Expr::Try(_, s)
+            | Expr::ArrayLit(_, s)
+            | Expr::StructLit(_, _, s)
+            | Expr::DotEnum(_, s)
+            | Expr::If(_, _, _, s) => *s,
             Expr::Block(b) => b.span,
         }
     }
@@ -250,15 +323,37 @@ impl Expr {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BinOp {
-    Add, Sub, Mul, Div, Rem,
-    BitAnd, BitOr, BitXor, Shl, Shr,
-    Eq, Ne, Lt, Gt, Le, Ge,
-    And, Or,
-    WrapAdd, WrapSub, WrapMul,
-    CheckAdd, CheckSub,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
+    Eq,
+    Ne,
+    Lt,
+    Gt,
+    Le,
+    Ge,
+    And,
+    Or,
+    WrapAdd,
+    WrapSub,
+    WrapMul,
+    CheckAdd,
+    CheckSub,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum UnaryOp {
-    Neg, Not, BitNot, Ref, RefMut, Deref,
+    Neg,
+    Not,
+    BitNot,
+    Ref,
+    RefMut,
+    Deref,
 }
