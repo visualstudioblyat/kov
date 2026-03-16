@@ -92,7 +92,11 @@ fn compile(source: &str) -> CompileResult {
         .as_deref()
         .and_then(codegen::startup::BoardConfig::from_name);
 
-    let ir_result = ir::lower::Lowering::lower(&program);
+    let mut ir_result = ir::lower::Lowering::lower(&program);
+    // optimize IR
+    for func in &mut ir_result.functions {
+        ir::opt::optimize(func);
+    }
     let ram_base = board_config
         .as_ref()
         .map(|b| b.ram_start)

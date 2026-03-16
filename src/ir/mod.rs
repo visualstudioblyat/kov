@@ -1,5 +1,6 @@
 pub mod globals;
 pub mod lower;
+pub mod opt;
 pub mod types;
 
 use types::IrType;
@@ -40,7 +41,7 @@ pub struct Inst {
     pub op: Op,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Op {
     // constants
     ConstI32(i32),
