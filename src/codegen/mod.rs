@@ -376,6 +376,25 @@ impl CodeGen {
                 }
             }
 
+            Op::GetErrorTag => {
+                // error tag is in a1 after a call
+                if rd != A1 {
+                    self.emitter.emit32(mv(rd, A1));
+                }
+            }
+
+            Op::MakeError(val) => {
+                // set a0 = val (payload), a1 = 1 (error tag)
+                let src = ra.get(*val);
+                if src != A0 {
+                    self.emitter.emit32(mv(A0, src));
+                }
+                self.emitter.emit32(addi(A1, ZERO, 1));
+                if rd != A0 {
+                    self.emitter.emit32(mv(rd, A0));
+                }
+            }
+
             Op::Nop => {}
 
             _ => {} // ConstI64 etc — TODO
@@ -412,6 +431,18 @@ impl CodeGen {
                 self.emitter
                     .emit_branch(bne(cond_reg, ZERO, 0), &then_label);
                 self.emitter.emit_jump(j_offset(0), &else_label);
+            }
+            Terminator::ReturnError(payload, tag) => {
+                let p = ra.get(*payload);
+                let t = ra.get(*tag);
+                if p != A0 {
+                    self.emitter.emit32(mv(A0, p));
+                }
+                if t != A1 {
+                    self.emitter.emit32(mv(A1, t));
+                }
+                self.emitter
+                    .emit_jump(j_offset(0), &format!("{}.epilogue", fn_name));
             }
             Terminator::Unreachable => {
                 self.emitter.emit32(ebreak());
@@ -597,6 +628,15 @@ mod tests {
                 let v12 = v11 + 12; let v13 = v12 + 13; let v14 = v13 + 14;
                 return v0 + v1 + v2 + v3 + v4 + v5 + v6 + v7 + v8 + v9 + v10 + v11 + v12 + v13 + v14;
             }",
+        );
+        assert!(!code.is_empty());
+        assert_eq!(code.len() % 4, 0);
+    }
+
+    #[test]
+    fn codegen_try_expression() {
+        let code = compile(
+            "fn read_sensor() !u32 { return 42; }\nfn f() !u32 { let x = try read_sensor(); return x; }",
         );
         assert!(!code.is_empty());
         assert_eq!(code.len() % 4, 0);

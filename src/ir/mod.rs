@@ -85,6 +85,12 @@ pub enum Op {
     // function call
     Call(String, Vec<Value>),
 
+    // extract error tag from the last call result (reads a1)
+    GetErrorTag,
+
+    // make an error value: sets error tag to 1, payload to the given value
+    MakeError(Value),
+
     // zero-extend / sign-extend / truncate
     Zext(Value, IrType),
     Sext(Value, IrType),
@@ -116,6 +122,9 @@ pub enum Terminator {
 
     // return from function
     Return(Option<Value>),
+
+    // return error: propagate payload (a0) and error tag (a1) from callee
+    ReturnError(Value, Value), // (payload, error_tag)
 
     // unreachable (after diverging calls, infinite loops)
     Unreachable,

@@ -882,6 +882,35 @@ impl<'a> FnBuilder<'a> {
                 self.emit(Op::Load(addr, IrType::I32), IrType::I32)
             }
 
+            Expr::Try(inner, _) => {
+                // evaluate the inner expression (should be a function call returning !T)
+                let payload = self.lower_expr(inner);
+                // get the error tag (a1 after the call)
+                let tag = self.emit(Op::GetErrorTag, IrType::I32);
+                // branch: if tag != 0, propagate error
+                let zero = self.emit(Op::ConstI32(0), IrType::I32);
+                let is_err = self.emit(Op::Ne(tag, zero), IrType::Bool);
+                let err_bb = self.func.new_block();
+                let ok_bb = self.func.new_block();
+                self.func.set_terminator(
+                    self.current_block,
+                    Terminator::BranchIf {
+                        cond: is_err,
+                        then_block: err_bb,
+                        then_args: vec![],
+                        else_block: ok_bb,
+                        else_args: vec![],
+                    },
+                );
+                // error path: propagate
+                self.current_block = err_bb;
+                self.func
+                    .set_terminator(self.current_block, Terminator::ReturnError(payload, tag));
+                // ok path: unwrap payload
+                self.current_block = ok_bb;
+                payload
+            }
+
             _ => {
                 // DotEnum, Cast, etc — TODO
                 self.emit(Op::Nop, IrType::Void)
@@ -1173,6 +1202,31 @@ mod tests {
             .iter()
             .any(|b| b.insts.iter().any(|i| matches!(&i.op, Op::GlobalAddr(_))));
         assert!(has_global_addr, "string should emit GlobalAddr");
+        println!("{}", func);
+    }
+
+    #[test]
+    fn lower_try_expression() {
+        let ir = lower(
+            "fn read_sensor() !u32 { return 42; }\nfn f() !u32 { let x = try read_sensor(); return x; }",
+        );
+        assert_eq!(ir.functions.len(), 2);
+        let func = &ir.functions[1]; // f
+        // should have GetErrorTag op
+        let has_get_tag = func
+            .blocks
+            .iter()
+            .any(|b| b.insts.iter().any(|i| matches!(&i.op, Op::GetErrorTag)));
+        assert!(has_get_tag, "try should emit GetErrorTag");
+        // should have a ReturnError terminator in one of the blocks
+        let has_return_error = func
+            .blocks
+            .iter()
+            .any(|b| matches!(b.terminator, Terminator::ReturnError(_, _)));
+        assert!(
+            has_return_error,
+            "try should emit ReturnError for error propagation"
+        );
         println!("{}", func);
     }
 }
