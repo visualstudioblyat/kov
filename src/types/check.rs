@@ -5,14 +5,12 @@ use std::collections::{HashMap, HashSet};
 
 pub struct TypeChecker {
     errors: Vec<TypeError>,
-    // all known board peripheral names (from board{} definitions)
     board_peripherals: HashMap<String, Vec<String>>,
-    // which peripherals have been claimed — the ownership enforcement
     claimed_peripherals: HashSet<String>,
-    // struct definitions
     structs: HashMap<String, Vec<(String, Ty)>>,
-    // enum definitions
     enums: HashMap<String, Vec<String>>,
+    // function signatures: name → (param_types, return_type)
+    fn_sigs: HashMap<String, (Vec<Ty>, Ty)>,
 }
 
 struct FnScope {
@@ -29,6 +27,7 @@ impl TypeChecker {
             claimed_peripherals: HashSet::new(),
             structs: HashMap::new(),
             enums: HashMap::new(),
+            fn_sigs: HashMap::new(),
         }
     }
 
@@ -39,6 +38,7 @@ impl TypeChecker {
                 TopItem::Board(b) => self.register_board(b),
                 TopItem::Struct(s) => self.register_struct(s),
                 TopItem::Enum(e) => self.register_enum(e),
+                TopItem::Function(f) => self.register_fn(f),
                 _ => {}
             }
         }
@@ -80,6 +80,12 @@ impl TypeChecker {
     fn register_enum(&mut self, e: &EnumDef) {
         let variants = e.variants.iter().map(|v| v.name.clone()).collect();
         self.enums.insert(e.name.clone(), variants);
+    }
+
+    fn register_fn(&mut self, f: &FnDef) {
+        let params: Vec<Ty> = f.params.iter().map(|p| Ty::from_ast(&p.ty)).collect();
+        let ret = f.ret_type.as_ref().map(Ty::from_ast).unwrap_or(Ty::Void);
+        self.fn_sigs.insert(f.name.clone(), (params, ret));
     }
 
     fn check_interrupt(&mut self, i: &InterruptDef) {
@@ -242,6 +248,36 @@ impl TypeChecker {
                 self.check_block(body, scope);
             }
 
+            Stmt::Match { expr, arms, span } => {
+                let scrutinee_ty = self.check_expr(expr, scope);
+                let mut has_wildcard = false;
+                for arm in arms {
+                    match &arm.pattern {
+                        Pattern::Wildcard => has_wildcard = true,
+                        Pattern::Ident(_) => has_wildcard = true, // binding catches all
+                        Pattern::IntLit(_) => {
+                            if scrutinee_ty != Ty::Unknown && !scrutinee_ty.is_integer() {
+                                self.err(
+                                    arm.span,
+                                    format!(
+                                        "integer pattern on non-integer type {:?}",
+                                        scrutinee_ty
+                                    ),
+                                );
+                            }
+                        }
+                        Pattern::Variant(_, _) => {} // TODO: enum variant checking
+                    }
+                    self.check_expr(&arm.body, scope);
+                }
+                if !has_wildcard && !arms.is_empty() {
+                    self.err(
+                        *span,
+                        "match is not exhaustive: add a _ wildcard arm".into(),
+                    );
+                }
+            }
+
             Stmt::Expr(expr) => {
                 self.check_expr(expr, scope);
             }
@@ -370,13 +406,28 @@ impl TypeChecker {
                 Ty::Unknown // method return types need full resolution
             }
 
-            Expr::Call(callee, args, _) => {
-                // don't error on unknown function names — resolved at link time
-                if !matches!(callee.as_ref(), Expr::Ident(_, _)) {
+            Expr::Call(callee, args, span) => {
+                let arg_tys: Vec<Ty> = args.iter().map(|a| self.check_expr(a, scope)).collect();
+
+                if let Expr::Ident(name, _) = callee.as_ref() {
+                    if let Some((param_tys, ret_ty)) = self.fn_sigs.get(name).cloned() {
+                        // check arg count
+                        if arg_tys.len() != param_tys.len() {
+                            self.err(
+                                *span,
+                                format!(
+                                    "{}() expects {} args, got {}",
+                                    name,
+                                    param_tys.len(),
+                                    arg_tys.len()
+                                ),
+                            );
+                        }
+                        return ret_ty;
+                    }
+                    // unknown function — might be external, don't error
+                } else {
                     self.check_expr(callee, scope);
-                }
-                for arg in args {
-                    self.check_expr(arg, scope);
                 }
                 Ty::Unknown
             }
@@ -390,6 +441,34 @@ impl TypeChecker {
                 match obj_ty {
                     Ty::Array(inner, _) | Ty::Slice(inner) => *inner,
                     _ => Ty::Unknown,
+                }
+            }
+
+            Expr::StructLit(name, fields, span) => {
+                if let Some(def_fields) = self.structs.get(name).cloned() {
+                    // check all fields provided
+                    for (def_name, _) in &def_fields {
+                        if !fields.iter().any(|(n, _)| n == def_name) {
+                            self.err(
+                                *span,
+                                format!("missing field '{}' in struct {}", def_name, name),
+                            );
+                        }
+                    }
+                    // check no extra fields
+                    for (field_name, expr) in fields {
+                        self.check_expr(expr, scope);
+                        if !def_fields.iter().any(|(n, _)| n == field_name) {
+                            self.err(
+                                *span,
+                                format!("unknown field '{}' in struct {}", field_name, name),
+                            );
+                        }
+                    }
+                    Ty::Named(name.clone())
+                } else {
+                    self.err(*span, format!("unknown struct: {}", name));
+                    Ty::Unknown
                 }
             }
 
@@ -484,6 +563,55 @@ mod tests {
         let result = check("fn f() { let x = true + false; }");
         assert!(result.is_err());
         assert!(result.unwrap_err()[0].message.contains("non-numeric"));
+    }
+
+    #[test]
+    fn wrong_arg_count() {
+        let result = check("fn add(a: u32, b: u32) u32 { return a + b; }\nfn f() { add(1); }");
+        assert!(result.is_err());
+        assert!(result.unwrap_err()[0].message.contains("expects 2 args"));
+    }
+
+    #[test]
+    fn fn_return_type_inferred() {
+        // calling a known function should give back its return type
+        assert!(check("fn get() u32 { return 42; }\nfn f() { let x: u32 = get(); }").is_ok());
+    }
+
+    #[test]
+    fn match_not_exhaustive() {
+        let result = check("fn f(x: u32) { match x { 0 => 1, 1 => 2, } }");
+        assert!(result.is_err());
+        assert!(result.unwrap_err()[0].message.contains("exhaustive"));
+    }
+
+    #[test]
+    fn match_with_wildcard_ok() {
+        assert!(check("fn f(x: u32) { match x { 0 => 1, _ => 2, } }").is_ok());
+    }
+
+    #[test]
+    fn struct_missing_field() {
+        let result = check("struct Point { x: u32, y: u32 }\nfn f() { let p = Point { x: 1 }; }");
+        assert!(result.is_err());
+        assert!(result.unwrap_err()[0].message.contains("missing field"));
+    }
+
+    #[test]
+    fn struct_unknown_field() {
+        let result = check(
+            "struct Point { x: u32, y: u32 }\nfn f() { let p = Point { x: 1, y: 2, z: 3 }; }",
+        );
+        assert!(result.is_err());
+        assert!(result.unwrap_err()[0].message.contains("unknown field"));
+    }
+
+    #[test]
+    fn struct_valid() {
+        assert!(
+            check("struct Point { x: u32, y: u32 }\nfn f() { let p = Point { x: 1, y: 2 }; }")
+                .is_ok()
+        );
     }
 
     #[test]
