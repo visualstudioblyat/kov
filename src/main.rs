@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-#![allow(clippy::enum_variant_names, clippy::collapsible_if)]
+#![allow(clippy::enum_variant_names, clippy::collapsible_if, clippy::type_complexity, clippy::ptr_arg)]
 
 mod codegen;
 mod emu;

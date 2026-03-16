@@ -32,38 +32,41 @@ the compiler exists end-to-end. source code becomes machine code that toggles GP
 the language is currently a skeleton. you can blink an LED but you can't write a real driver. this phase fills in everything needed to write non-trivial embedded programs.
 
 **memory model**
-- [ ] global variables: allocate space in .data (initialized) or .bss (zeroed), generate load/store instructions to access them. the startup code already copies .data from flash to RAM and zeros .bss — globals just need to be placed there.
-- [ ] static variables inside functions: same as globals but scoped. `static mut counter: u32 = 0` in an ISR needs a fixed memory address that persists across calls.
-- [ ] stack-allocated locals: currently all locals live in registers. when registers run out, locals need stack slots. this means tracking frame size, emitting `addi sp, sp, -N` in the prologue, and `sw`/`lw` for spills.
-- [ ] struct layout: compute field offsets from types (u8=1, u16=2, u32=4, align to natural boundary). generate field access as base pointer + offset. `point.x` becomes `lw rd, offset(base)`.
-- [ ] array allocation: fixed-size arrays on the stack or in static memory. index with bounds check: `if i >= len { panic }`. generate as `sll` (shift for element size) + `add` (base + offset) + `lw`/`sw`.
-- [ ] string literals: store in .rodata section. generate a pointer (LUI+ADDI) to the string's address. strings are `&[u8]` — a pointer and a length.
+- [x] global variables: RAM address resolution, load/store codegen, .data and .bss placement
+- [x] static variables inside functions: collected during lowering, allocated in global table
+- [x] stack-allocated locals: register spilling to stack when all 22 registers exhausted
+- [x] struct layout: field offset calculation with natural alignment, StructLit → StackAlloc + Store, field access → base + offset + Load
+- [x] array allocation: ArrayLit → StackAlloc + Store per element, Index → base + (idx * elem_size) + Load
+- [x] string literals: collected in pre-pass, stored in GlobalTable, StringLit → GlobalAddr pointer
+- [ ] bounds checking: runtime index validation with panic on out-of-bounds
 
 **control flow completeness**
-- [ ] match statements: lower to a chain of comparisons and branches. each arm is a basic block. exhaustiveness checking ensures all cases are covered (for enums) or a wildcard `_` exists.
-- [ ] break and continue: need a "loop context" stack in the lowering pass. `break` jumps to the loop's exit block. `continue` jumps to the loop's header block.
-- [ ] labeled loops: `'outer: loop { ... break 'outer; }` for breaking out of nested loops.
-- [ ] early return from nested blocks: already partially works but needs proper cleanup (stack restoration before jump to epilogue).
+- [x] match statements: chain of check blocks with int literal and wildcard patterns, exhaustiveness checking in type checker
+- [x] break and continue: loop context stack, break → exit block, continue → header block
+- [ ] labeled loops: `'outer: loop { ... break 'outer; }` for breaking out of nested loops
+- [x] early return: jump to epilogue label with proper stack restoration
 
 **functions**
-- [ ] calling convention: follow RISC-V psABI. save s0-s11 in prologue if used, restore in epilogue. arguments in a0-a7, return in a0-a1. stack 16-byte aligned.
-- [ ] function calls with >8 arguments: spill to stack per ABI.
-- [ ] struct return: small structs in a0-a1, large structs via hidden pointer parameter.
-- [ ] recursive functions: allowed but the compiler tracks max recursion depth for stack analysis. infinite recursion is a compile error when #[stack(N)] is present.
-- [ ] function pointers: `let f: fn(u32) -> u32 = add_one;` stores function address. call via JALR.
+- [x] calling convention: RISC-V psABI. two-pass codegen discovers used s-registers, prologue/epilogue saves only what's needed. 16-byte aligned frames.
+- [ ] function calls with >8 arguments: spill to stack per ABI
+- [ ] struct return: small structs in a0-a1, large structs via hidden pointer
+- [ ] recursive functions: stack depth tracking with #[stack(N)] annotation
+- [ ] function pointers: store function address, call via JALR
 
 **error handling**
-- [ ] error unions: `!T` is a tagged union — either the value or an error code. represented as two registers (value + tag) or a struct on the stack.
-- [ ] try keyword: `let x = try read_sensor();` checks the error tag, propagates if error, unwraps if ok. lowers to a branch on the tag register.
-- [ ] panic handler: configurable per-project. default is disable interrupts + wfi loop. options: reset via watchdog, log to UART, blink error code on LED.
-- [ ] bounds check failure: generates a call to the panic handler with a "bounds check failed" message.
+- [x] error unions: `!T` as tagged return — payload in a0, error tag in a1
+- [x] try keyword: checks error tag, propagates via ReturnError if nonzero, unwraps payload if ok
+- [x] panic handler: built-in `panic` label in startup code — disable interrupts + wfi halt
+- [ ] bounds check failure: generates call to panic handler
 
 **type system**
-- [ ] local type inference: `let x = 42;` infers u32. `let y = x + 1;` infers u32 from x. no global inference, no Hindley-Milner — just local flow.
-- [ ] integer promotion rules: u8 + u8 = u8 (not u32 like C). explicit cast required for widening. this prevents the subtle bugs that C's integer promotion causes.
-- [ ] struct types: type checker resolves field names and types. `point.x` checked against struct definition. mismatched field types are errors.
-- [ ] enum types: variants tracked, match exhaustiveness verified. `Color::Red` resolved to the enum's discriminant value.
-- [ ] function signatures: parameter types and return type checked at call sites. wrong number of args, wrong types → compile error with "expected X, got Y."
+- [x] local type inference: `let x = 42;` infers u32, `let x = get();` infers from function return type
+- [ ] integer promotion rules: u8 + u8 = u8 (not u32 like C)
+- [x] struct types: field names and types resolved, struct literal validation (missing/unknown fields)
+- [ ] enum types: variant tracking, discriminant values
+- [x] function signatures: parameter count checked at call sites, return type inferred
+- [x] unused variable warnings: _ prefix suppression, JSON warning output
+- [x] match exhaustiveness: error if no wildcard arm on non-enum match
 
 ---
 
@@ -98,31 +101,31 @@ without these, every data structure and peripheral driver is a one-off. this is 
 the language works but produces inefficient code and cryptic errors. this phase makes the compiler competitive.
 
 **register allocator**
-- [ ] live interval analysis: compute the range of instructions where each SSA value is live. build intervals from the IR.
-- [ ] linear scan allocation: process intervals in order. assign registers greedily. when all registers are occupied, spill the interval that ends furthest in the future.
-- [ ] spill code generation: insert `sw` before a spilled value's last use and `lw` before its next use. track stack frame growth.
-- [ ] register coalescing: when `x = y` (copy), merge their intervals if they don't conflict. eliminates the copy.
-- [ ] callee-saved register tracking: if the allocator assigns s0-s11, generate save/restore in prologue/epilogue.
-- [ ] move from trivial allocator: replace the current first-fit allocator. all existing tests must still pass.
+- [x] callee-saved register tracking: two-pass codegen discovers used s-registers, saves/restores only what's needed
+- [x] spill code generation: evict registers to stack when all 22 exhausted, pending spill/reload around instructions
+- [ ] live interval analysis: compute liveness ranges for better allocation decisions
+- [ ] linear scan allocation: replace first-fit with proper linear scan
+- [ ] register coalescing: merge intervals for copies to eliminate moves
 
 **optimizations (ordered by impact-to-effort ratio)**
-- [ ] dead code elimination: mark instructions with side effects (stores, calls). walk backward marking their inputs. delete unmarked instructions.
-- [ ] constant folding: `3 + 4` → `7` at compile time. `x * 1` → `x`. `x * 0` → `0`. evaluate constant expressions in the IR.
-- [ ] constant propagation: if `x = 5` and x is never reassigned, replace all uses of x with 5. enables further folding.
-- [ ] copy propagation: if `y = x`, replace uses of y with x. reduces register pressure.
-- [ ] common subexpression elimination: if `a + b` computed twice, reuse the first result.
-- [ ] function inlining: inline functions with body size < 20 instructions or called only once. critical for zero-cost abstractions (trait methods, getters).
-- [ ] strength reduction: `x * 4` → `x << 2`. `x / 8` → `x >> 3` (unsigned only).
-- [ ] tail call optimization: if the last thing a function does is call another function, reuse the stack frame. `jal` becomes `j`.
-- [ ] compressed instruction pass: after code generation, scan for instructions that have RV32C equivalents and replace them. reduces code size by ~25%.
+- [x] dead code elimination: mark side-effecting ops, walk backward, delete unmarked
+- [x] constant folding: evaluate const expressions at compile time, two-pass for chained folding
+- [x] constant propagation: track constants through the IR, fold uses
+- [x] common subexpression elimination: deduplicate pure ops, rewrite all uses
+- [x] function inlining: inline tiny leaf functions (<=5 insts, called once) by substituting params
+- [x] strength reduction: mul by 2 → add(x, x)
+- [ ] copy propagation: if `y = x`, replace uses of y with x
+- [ ] tail call optimization: reuse stack frame for tail calls
+- [ ] compressed instruction pass: replace RV32I with RV32C equivalents (~25% size reduction)
 
 **diagnostics**
-- [ ] source line display: show the line of source code that caused the error, with carets under the problematic span.
-- [ ] multi-span errors: "type `u32` declared here (line 5)" + "but used as `bool` here (line 12)". requires tracking definition sites in the type checker.
-- [ ] fix suggestions: "add `mut` to make this variable mutable", "this peripheral was already claimed on line 8". requires the type checker to produce structured suggestions.
-- [ ] JSON error format: `--error-format=json` outputs errors as JSON objects with file, line, column, message, severity, and suggested fix. essential for editor integration and agent consumption.
-- [ ] warning system: unused variables, unreachable code, unnecessary casts. warnings don't fail the build unless `-W` flag is set.
-- [ ] error recovery: don't stop at the first error. synchronize at semicolons and closing braces, report multiple errors per compilation.
+- [x] source line display: show source line with carets under the error span
+- [x] JSON error format: `--error-format=json` for editor/agent integration. file, line, column, severity, message.
+- [x] warning system: unused variables (with _ prefix suppression), JSON warning output
+- [x] error recovery: synchronize at top-level keywords, report multiple parse errors per compilation
+- [x] `kov check` command: type check without compiling
+- [ ] multi-span errors: "declared here" + "but used as X here"
+- [ ] fix suggestions: structured suggestions in error output
 
 ---
 
