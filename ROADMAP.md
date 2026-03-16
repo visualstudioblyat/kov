@@ -103,9 +103,9 @@ the language works but produces inefficient code and cryptic errors. this phase 
 **register allocator**
 - [x] callee-saved register tracking: two-pass codegen discovers used s-registers, saves/restores only what's needed
 - [x] spill code generation: evict registers to stack when all 22 exhausted, pending spill/reload around instructions
-- [ ] live interval analysis: compute liveness ranges for better allocation decisions
-- [ ] linear scan allocation: replace first-fit with proper linear scan
-- [ ] register coalescing: merge intervals for copies to eliminate moves
+- [x] live interval analysis: compute last-use for every value, expire dead values during allocation
+- [x] linear scan allocation: free and reuse registers when values die, 60 bytes smaller output
+- [x] register coalescing: copy propagation at IR level + param pre-assignment at register level
 
 **optimizations (ordered by impact-to-effort ratio)**
 - [x] dead code elimination: mark side-effecting ops, walk backward, delete unmarked
