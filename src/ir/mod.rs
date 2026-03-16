@@ -1,3 +1,4 @@
+pub mod consteval;
 pub mod globals;
 pub mod lower;
 pub mod opt;
