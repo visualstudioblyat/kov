@@ -5,13 +5,15 @@ pub mod startup;
 pub mod mmio;
 
 use std::collections::HashMap;
-use crate::ir::{Function, Value, Block, Op, Terminator};
-use crate::ir::types::IrType;
+use crate::ir::{Function, Value, Op, Terminator};
+use crate::ir::globals::GlobalTable;
 use emit::Emitter;
 use encode::*;
 
 pub struct CodeGen {
     pub emitter: Emitter,
+    pub ram_base: u32,
+    pub global_addrs: HashMap<String, u32>, // name → absolute address
 }
 
 // trivial register allocator: map each IR value to a register.
@@ -59,7 +61,17 @@ impl RegAlloc {
 
 impl CodeGen {
     pub fn new() -> Self {
-        Self { emitter: Emitter::new() }
+        Self { emitter: Emitter::new(), ram_base: 0x2000_0000, global_addrs: HashMap::new() }
+    }
+
+    pub fn new_with_globals(ram_base: u32, globals: &GlobalTable) -> Self {
+        let mut global_addrs = HashMap::new();
+        for g in &globals.globals {
+            if let Some(offset) = globals.offset_of(&g.name) {
+                global_addrs.insert(g.name.clone(), ram_base + offset);
+            }
+        }
+        Self { emitter: Emitter::new(), ram_base, global_addrs }
     }
 
     pub fn gen_function(&mut self, func: &Function) {
@@ -79,7 +91,7 @@ impl CodeGen {
         self.emitter.emit32(addi(S0, SP, 16));
 
         // bind function params to a0..a7
-        for (i, (name, _ty)) in func.params.iter().enumerate() {
+        for (i, (_name, _ty)) in func.params.iter().enumerate() {
             let param_val = Value(i as u32);
             ra.assign(param_val, A0 + i as u32);
         }
@@ -221,8 +233,8 @@ impl CodeGen {
             }
 
             Op::GlobalAddr(name) => {
-                // placeholder — will need relocation
-                let (inst1, inst2) = li32(rd, 0);
+                let addr = self.global_addrs.get(name).copied().unwrap_or(0) as i32;
+                let (inst1, inst2) = li32(rd, addr);
                 self.emitter.emit32(inst1);
                 if let Some(i2) = inst2 { self.emitter.emit32(i2); }
             }
@@ -245,7 +257,7 @@ impl CodeGen {
             Terminator::Return(None) => {
                 self.emitter.emit_jump(j_offset(0), &format!("{}.epilogue", fn_name));
             }
-            Terminator::Jump(target, args) => {
+            Terminator::Jump(target, _args) => {
                 // move block args to target's registers
                 // (simplified: assumes target block params already allocated)
                 let target_label = format!("{}.b{}", fn_name, target.0);
@@ -341,5 +353,61 @@ mod tests {
 
         // verify it's valid 32-bit aligned instructions
         assert_eq!(code.len() % 4, 0);
+    }
+
+    fn compile_with_globals(src: &str) -> Vec<u8> {
+        let tokens = Lexer::tokenize(src).unwrap();
+        let program = Parser::new(tokens).parse().unwrap();
+        let ir = Lowering::lower(&program);
+
+        let mut cg = CodeGen::new_with_globals(0x2000_0000, &ir.globals);
+        for func in &ir.functions {
+            cg.gen_function(func);
+        }
+        cg.finish().unwrap()
+    }
+
+    #[test]
+    fn codegen_global_read() {
+        let code = compile_with_globals(
+            "static mut counter: u32 = 0;\nfn get() u32 { return counter; }"
+        );
+        assert!(!code.is_empty());
+        assert_eq!(code.len() % 4, 0);
+        // should contain a LW instruction (load from global address)
+        let has_lw = code.windows(4).any(|w| {
+            let inst = u32::from_le_bytes([w[0], w[1], w[2], w[3]]);
+            inst & 0x707F == 0x2003 // LW opcode
+        });
+        assert!(has_lw, "expected LW instruction for global read");
+    }
+
+    #[test]
+    fn codegen_break_in_loop() {
+        let code = compile("fn f() { loop { break; } }");
+        assert!(!code.is_empty());
+        assert_eq!(code.len() % 4, 0);
+    }
+
+    #[test]
+    fn codegen_continue_in_while() {
+        let code = compile("fn f(x: u32) { while x > 0 { continue; } }");
+        assert!(!code.is_empty());
+        assert_eq!(code.len() % 4, 0);
+    }
+
+    #[test]
+    fn codegen_global_increment_with_break() {
+        let code = compile_with_globals(
+            "static mut ticks: u32 = 0;\nfn f() { loop { ticks = ticks + 1; if ticks == 10 { break; } } }"
+        );
+        assert!(!code.is_empty());
+        assert_eq!(code.len() % 4, 0);
+        // should contain SW instruction (store to global)
+        let has_sw = code.windows(4).any(|w| {
+            let inst = u32::from_le_bytes([w[0], w[1], w[2], w[3]]);
+            inst & 0x707F == 0x2023 // SW opcode
+        });
+        assert!(has_sw, "expected SW instruction for global write");
     }
 }

@@ -91,17 +91,20 @@ impl GlobalTable {
             }
         }
         // check zero-initialized globals (in BSS, after data)
-        let data_end = offset;
+        let bss_start = offset;
+        let mut bss_offset = 0u32;
         for g in &self.globals {
             if matches!(g.init, GlobalInit::Zero) {
-                if g.name == name { return Some(data_end + offset); }
-                offset += g.ty.size_bytes();
+                if g.name == name { return Some(bss_start + bss_offset); }
+                bss_offset += g.ty.size_bytes();
             }
         }
+        let after_bss = bss_start + bss_offset;
         // check strings
+        let mut str_offset = after_bss;
         for (label, bytes) in &self.strings {
-            if label == name { return Some(offset); }
-            offset += ((bytes.len() as u32 + 1) + 3) & !3;
+            if label == name { return Some(str_offset); }
+            str_offset += ((bytes.len() as u32 + 1) + 3) & !3;
         }
         None
     }

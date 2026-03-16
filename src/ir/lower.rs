@@ -23,6 +23,8 @@ struct FnBuilder<'a> {
     vars: HashMap<String, Value>,
     var_kinds: HashMap<String, VarKind>,
     periph_map: &'a PeripheralMap,
+    globals: &'a super::globals::GlobalTable,
+    loop_stack: Vec<(Block, Block)>, // (header/continue_target, exit_block)
 }
 
 impl Lowering {
@@ -50,7 +52,7 @@ impl Lowering {
             match item {
                 TopItem::Function(f) => {
                     collect_body_statics(&f.body, &mut globals);
-                    functions.push(lower_fn(f, &periph_map));
+                    functions.push(lower_fn(f, &periph_map, &globals));
                 }
                 TopItem::Interrupt(i) => {
                     collect_body_statics(&i.body, &mut globals);
@@ -63,7 +65,7 @@ impl Lowering {
                         body: i.body.clone(),
                         span: i.span,
                     };
-                    functions.push(lower_fn(&fake_fn, &periph_map));
+                    functions.push(lower_fn(&fake_fn, &periph_map, &globals));
                 }
                 _ => {}
             }
@@ -115,7 +117,7 @@ fn collect_body_statics(block: &ast::Block, globals: &mut super::globals::Global
     }
 }
 
-fn lower_fn(f: &ast::FnDef, periph_map: &PeripheralMap) -> Function {
+fn lower_fn(f: &ast::FnDef, periph_map: &PeripheralMap, globals: &super::globals::GlobalTable) -> Function {
     let params: Vec<(String, IrType)> = f.params.iter()
         .map(|p| (p.name.clone(), ast_type_to_ir(&Some(p.ty.clone()))))
         .collect();
@@ -148,6 +150,8 @@ fn lower_fn(f: &ast::FnDef, periph_map: &PeripheralMap) -> Function {
         vars,
         var_kinds,
         periph_map,
+        globals,
+        loop_stack: Vec::new(),
     };
 
     for stmt in &f.body.stmts {
@@ -225,7 +229,7 @@ impl<'a> FnBuilder<'a> {
 
     fn lower_stmt(&mut self, stmt: &Stmt) {
         match stmt {
-            Stmt::Let { name, value, ty, .. } => {
+            Stmt::Let { name, value, ty: _, .. } => {
                 // detect peripheral handle creation: b.gpio.pin(N, ...)
                 if let Some(kind) = self.detect_peripheral_handle(value) {
                     self.var_kinds.insert(name.clone(), kind);
@@ -235,9 +239,18 @@ impl<'a> FnBuilder<'a> {
             }
 
             Stmt::Assign { target, value, .. } => {
+                if let Expr::Ident(name, _) = target {
+                    if self.globals.find(name).is_some() && !self.vars.contains_key(name) {
+                        // global variable assignment: emit GlobalAddr + Store
+                        let val = self.lower_expr(value);
+                        let addr = self.emit(Op::GlobalAddr(name.clone()), IrType::Ptr);
+                        self.emit(Op::Store(addr, val), IrType::Void);
+                        return;
+                    }
+                }
                 let _addr = self.lower_expr(target);
                 let _val = self.lower_expr(value);
-                // TODO: proper store via address resolution
+                // TODO: proper store via address resolution for non-globals
             }
 
             Stmt::Expr(expr) => {
@@ -307,9 +320,11 @@ impl<'a> FnBuilder<'a> {
                 self.func.set_terminator(self.current_block, Terminator::Jump(loop_bb, vec![]));
                 self.current_block = loop_bb;
 
+                self.loop_stack.push((loop_bb, exit_bb));
                 for s in &body.stmts {
                     self.lower_stmt(s);
                 }
+                self.loop_stack.pop();
 
                 // loop back if no explicit break/return
                 if matches!(self.func.blocks[self.current_block.0 as usize].terminator, Terminator::None) {
@@ -337,9 +352,11 @@ impl<'a> FnBuilder<'a> {
                 });
 
                 self.current_block = body_bb;
+                self.loop_stack.push((cond_bb, exit_bb));
                 for s in &body.stmts {
                     self.lower_stmt(s);
                 }
+                self.loop_stack.pop();
                 if matches!(self.func.blocks[self.current_block.0 as usize].terminator, Terminator::None) {
                     self.func.set_terminator(self.current_block, Terminator::Jump(cond_bb, vec![]));
                 }
@@ -375,9 +392,11 @@ impl<'a> FnBuilder<'a> {
 
                 // body
                 self.current_block = body_bb;
+                self.loop_stack.push((header_bb, exit_bb));
                 for s in &body.stmts {
                     self.lower_stmt(s);
                 }
+                self.loop_stack.pop();
                 // increment and loop back
                 let one = self.emit(Op::ConstI32(1), IrType::I32);
                 let next = self.emit(Op::Add(loop_var, one), IrType::I32);
@@ -386,6 +405,20 @@ impl<'a> FnBuilder<'a> {
                 }
 
                 self.current_block = exit_bb;
+            }
+
+            Stmt::Break(_) => {
+                if let Some(&(_, exit_bb)) = self.loop_stack.last() {
+                    self.func.set_terminator(self.current_block, Terminator::Jump(exit_bb, vec![]));
+                    self.current_block = self.func.new_block();
+                }
+            }
+
+            Stmt::Continue(_) => {
+                if let Some(&(header_bb, _)) = self.loop_stack.last() {
+                    self.func.set_terminator(self.current_block, Terminator::Jump(header_bb, vec![]));
+                    self.current_block = self.func.new_block();
+                }
             }
 
             _ => {} // match, defer, critical_section — TODO
@@ -403,7 +436,16 @@ impl<'a> FnBuilder<'a> {
             }
 
             Expr::Ident(name, _) => {
-                *self.vars.get(name).unwrap_or(&Value(0))
+                if let Some(&val) = self.vars.get(name) {
+                    val
+                } else if let Some(g) = self.globals.find(name) {
+                    // global variable: emit GlobalAddr + Load
+                    let ty = g.ty;
+                    let addr = self.emit(Op::GlobalAddr(name.clone()), IrType::Ptr);
+                    self.emit(Op::Load(addr, ty), ty)
+                } else {
+                    Value(0)
+                }
             }
 
             Expr::Binary(lhs, op, rhs, _) => {
@@ -547,5 +589,67 @@ mod tests {
         for f in &ir.functions {
             println!("{}\n", f);
         }
+    }
+
+    #[test]
+    fn lower_global_read() {
+        let ir = lower("static mut counter: u32 = 0;\nfn get() u32 { return counter; }");
+        assert_eq!(ir.functions.len(), 1);
+        // should have a GlobalAddr op followed by a Load
+        let func = &ir.functions[0];
+        let has_global_addr = func.blocks.iter().any(|b| {
+            b.insts.iter().any(|i| matches!(&i.op, Op::GlobalAddr(n) if n == "counter"))
+        });
+        assert!(has_global_addr, "should emit GlobalAddr for global variable read");
+        let has_load = func.blocks.iter().any(|b| {
+            b.insts.iter().any(|i| matches!(&i.op, Op::Load(_, _)))
+        });
+        assert!(has_load, "should emit Load after GlobalAddr");
+        println!("{}", func);
+    }
+
+    #[test]
+    fn lower_global_write() {
+        let ir = lower("static mut counter: u32 = 0;\nfn set() { counter = 42; }");
+        assert_eq!(ir.functions.len(), 1);
+        let func = &ir.functions[0];
+        let has_store = func.blocks.iter().any(|b| {
+            b.insts.iter().any(|i| matches!(&i.op, Op::Store(_, _)))
+        });
+        assert!(has_store, "should emit Store for global variable write");
+        println!("{}", func);
+    }
+
+    #[test]
+    fn lower_break_in_loop() {
+        let ir = lower("fn f() { loop { break; } }");
+        let func = &ir.functions[0];
+        // break should create a jump to exit block, not loop infinitely
+        // we should have at least 3 blocks: entry, loop body, exit
+        assert!(func.blocks.len() >= 3, "break should create exit block");
+        println!("{}", func);
+    }
+
+    #[test]
+    fn lower_continue_in_while() {
+        let ir = lower("fn f(x: u32) { while x > 0 { continue; } }");
+        let func = &ir.functions[0];
+        // continue should jump back to condition block
+        assert!(func.blocks.len() >= 3, "while with continue should have cond/body/exit blocks");
+        println!("{}", func);
+    }
+
+    #[test]
+    fn lower_global_increment_with_break() {
+        let ir = lower(
+            "static mut ticks: u32 = 0;\nfn f() { loop { ticks = ticks + 1; if ticks == 10 { break; } } }"
+        );
+        let func = &ir.functions[0];
+        // should have GlobalAddr, Load, Store ops and a break jump
+        let has_global = func.blocks.iter().any(|b| {
+            b.insts.iter().any(|i| matches!(&i.op, Op::GlobalAddr(n) if n == "ticks"))
+        });
+        assert!(has_global, "should reference 'ticks' global");
+        println!("{}", func);
     }
 }
