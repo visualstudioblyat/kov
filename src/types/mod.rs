@@ -1,4 +1,5 @@
 pub mod check;
+pub mod interrupt;
 
 use crate::lexer::token::Span;
 use crate::parser::ast;

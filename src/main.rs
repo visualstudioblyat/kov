@@ -93,6 +93,12 @@ fn compile(source: &str) -> CompileResult {
         }
     }
 
+    // interrupt safety check
+    let isr_check = types::interrupt::InterruptSafety::check(&program);
+    for e in &isr_check.errors {
+        eprintln!("warning: {e}");
+    }
+
     let board_name = program.items.iter().find_map(|item| {
         if let parser::ast::TopItem::Board(b) = item {
             Some(b.name.clone())
