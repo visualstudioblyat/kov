@@ -1,3 +1,4 @@
+pub mod builtins;
 pub mod compress;
 pub mod elf;
 pub mod emit;

@@ -135,8 +135,32 @@ fn compile(source: &str) -> CompileResult {
         .unwrap_or(0x2000_0000);
     let mut cg = codegen::CodeGen::new_with_globals(ram_base, &ir_result.globals);
 
+    // extract clock from board definition
+    let clock_hz: u32 = program
+        .items
+        .iter()
+        .find_map(|item| {
+            if let parser::ast::TopItem::Board(b) = item {
+                b.fields.iter().find_map(|f| {
+                    if f.name == "clock" {
+                        if let Some(parser::ast::Expr::IntLit(v, _)) = &f.address {
+                            Some(*v as u32)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                })
+            } else {
+                None
+            }
+        })
+        .unwrap_or(160_000_000);
+
     if let Some(ref board) = board_config {
         codegen::startup::emit_startup(&mut cg.emitter, board);
+        codegen::builtins::emit_builtins(&mut cg.emitter, clock_hz);
         for (_, fn_name) in &interrupts {
             codegen::startup::emit_interrupt_wrapper(&mut cg.emitter, fn_name);
         }
