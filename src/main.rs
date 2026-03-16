@@ -69,7 +69,7 @@ fn compile(source: &str) -> CompileResult {
         Err(e) => die(&format!("lex error: {e}")),
     };
 
-    let program = match parser::Parser::new(tokens).parse() {
+    let mut program = match parser::Parser::new(tokens).parse() {
         Ok(p) => p,
         Err(errors) => {
             for e in &errors {
@@ -78,6 +78,7 @@ fn compile(source: &str) -> CompileResult {
             die(&format!("{} parse error(s)", errors.len()));
         }
     };
+    parser::monomorph::monomorphize(&mut program);
 
     match types::check::TypeChecker::new().check(&program) {
         Ok(warnings) => {

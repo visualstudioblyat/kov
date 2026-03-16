@@ -1,4 +1,5 @@
 pub mod ast;
+pub mod monomorph;
 
 use crate::lexer::token::{Span, Token, TokenKind};
 use ast::*;
