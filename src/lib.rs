@@ -238,3 +238,87 @@ pub fn run(source: &str, max_cycles: u64) -> Result<RunOutput, Vec<Diagnostic>> 
 pub fn disassemble(output: &CompileOutput) -> String {
     codegen::disasm::disassemble(&output.code, output.flash_base, &output.labels)
 }
+
+// WASM bindings — only compiled when wasm-bindgen feature is enabled
+#[cfg(feature = "wasm-bindgen")]
+mod wasm {
+    use wasm_bindgen::prelude::*;
+
+    #[wasm_bindgen]
+    pub fn wasm_compile(source: &str) -> String {
+        match super::compile(source) {
+            Ok(output) => {
+                let diags: Vec<String> = output
+                    .diagnostics
+                    .iter()
+                    .map(|d| format!("{}:{}:{}: {}", d.severity, d.line, d.column, d.message))
+                    .collect();
+                format!(
+                    r#"{{"ok":true,"code_size":{},"compressed_size":{},"compile_ms":{:.2},"diagnostics":[{}]}}"#,
+                    output.code.len(),
+                    output.compressed.len(),
+                    output.compile_ms,
+                    diags
+                        .iter()
+                        .map(|d| format!("\"{}\"", d.replace('"', "\\\"")))
+                        .collect::<Vec<_>>()
+                        .join(","),
+                )
+            }
+            Err(errors) => {
+                let msgs: Vec<String> = errors
+                    .iter()
+                    .map(|d| {
+                        format!(
+                            "\"{}:{}:{}: {}\"",
+                            d.severity,
+                            d.line,
+                            d.column,
+                            d.message.replace('"', "\\\"")
+                        )
+                    })
+                    .collect();
+                format!(r#"{{"ok":false,"errors":[{}]}}"#, msgs.join(","))
+            }
+        }
+    }
+
+    #[wasm_bindgen]
+    pub fn wasm_run(source: &str, max_cycles: u32) -> String {
+        match super::run(source, max_cycles as u64) {
+            Ok(output) => {
+                let writes: Vec<String> = output
+                    .mmio_writes
+                    .iter()
+                    .take(100)
+                    .map(|(a, v)| format!("[{},{}]", a, v))
+                    .collect();
+                format!(
+                    r#"{{"ok":true,"cycles":{},"halted":{},"mmio_writes":[{}]}}"#,
+                    output.cycles,
+                    output.halted,
+                    writes.join(","),
+                )
+            }
+            Err(errors) => {
+                let msgs: Vec<String> = errors
+                    .iter()
+                    .map(|d| format!("\"{}\"", d.message.replace('"', "\\\"")))
+                    .collect();
+                format!(r#"{{"ok":false,"errors":[{}]}}"#, msgs.join(","))
+            }
+        }
+    }
+
+    #[wasm_bindgen]
+    pub fn wasm_disassemble(source: &str) -> String {
+        match super::compile(source) {
+            Ok(output) => super::disassemble(&output),
+            Err(errors) => errors
+                .iter()
+                .map(|d| format!("error: {}", d.message))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        }
+    }
+}

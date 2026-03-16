@@ -6,10 +6,17 @@ edition = "2024"
 license = "Apache-2.0"
 rust-version = "1.85"
 
+[lib]
+crate-type = ["lib", "cdylib"]
+
 [dependencies]
+wasm-bindgen = { version = "0.2.114", optional = true }
 
 [profile.release]
 lto = "fat"
 codegen-units = 1
 panic = "abort"
 strip = true
+
+[features]
+wasm-bindgen = ["dep:wasm-bindgen"]
