@@ -33,12 +33,43 @@ impl Parser {
         Self { tokens, pos: 0 }
     }
 
-    pub fn parse(mut self) -> R<Program> {
+    pub fn parse(mut self) -> Result<Program, Vec<ParseError>> {
         let mut items = Vec::new();
+        let mut errors = Vec::new();
         while !self.at_eof() {
-            items.push(self.parse_top_item()?);
+            match self.parse_top_item() {
+                Ok(item) => items.push(item),
+                Err(e) => {
+                    errors.push(e);
+                    // synchronize: skip tokens until we find a top-level keyword
+                    self.synchronize();
+                }
+            }
         }
-        Ok(Program { items })
+        if errors.is_empty() {
+            Ok(Program { items })
+        } else {
+            Err(errors)
+        }
+    }
+
+    fn synchronize(&mut self) {
+        while !self.at_eof() {
+            match self.peek() {
+                TokenKind::Fn
+                | TokenKind::Struct
+                | TokenKind::Enum
+                | TokenKind::Board
+                | TokenKind::Const
+                | TokenKind::Static
+                | TokenKind::Import
+                | TokenKind::Interrupt
+                | TokenKind::Type => return,
+                _ => {
+                    self.advance_any();
+                }
+            }
+        }
     }
 
     // ── token access ──
@@ -65,6 +96,12 @@ impl Parser {
         let tok = &self.tokens[self.pos];
         self.pos += 1;
         tok
+    }
+
+    fn advance_any(&mut self) {
+        if !self.at_eof() {
+            self.pos += 1;
+        }
     }
 
     fn expect(&mut self, expected: &TokenKind) -> R<Span> {
@@ -1289,5 +1326,20 @@ mod tests {
         let prog = Parser::new(tokens).parse().unwrap();
         // import + board + fn + interrupt = 4 items
         assert_eq!(prog.items.len(), 4);
+    }
+
+    #[test]
+    fn error_recovery_multiple_errors() {
+        let src = "fn f( { } fn g() { let x = ; }";
+        let tokens = Lexer::tokenize(src).unwrap();
+        let result = Parser::new(tokens).parse();
+        assert!(result.is_err());
+        let errors = result.unwrap_err();
+        // should report at least 2 errors (one for f, one for g)
+        assert!(
+            errors.len() >= 2,
+            "should recover and report multiple errors, got {}",
+            errors.len()
+        );
     }
 }

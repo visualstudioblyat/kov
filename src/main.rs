@@ -58,7 +58,12 @@ fn compile(source: &str) -> CompileResult {
 
     let program = match parser::Parser::new(tokens).parse() {
         Ok(p) => p,
-        Err(e) => die(&format!("{e}")),
+        Err(errors) => {
+            for e in &errors {
+                eprint!("{}", errors::format_error(source, e.span, &e.message));
+            }
+            die(&format!("{} parse error(s)", errors.len()));
+        }
     };
 
     match types::check::TypeChecker::new().check(&program) {
@@ -103,7 +108,8 @@ fn compile(source: &str) -> CompileResult {
         .and_then(codegen::startup::BoardConfig::from_name);
 
     let mut ir_result = ir::lower::Lowering::lower(&program);
-    // optimize IR
+    // optimize IR: inline first, then per-function opts
+    ir::opt::inline_functions(&mut ir_result.functions);
     for func in &mut ir_result.functions {
         ir::opt::optimize(func);
     }
@@ -306,20 +312,16 @@ fn cmd_check(args: &[String]) {
 
     let program = match parser::Parser::new(tokens).parse() {
         Ok(p) => p,
-        Err(e) => {
-            if json_mode {
-                println!(
-                    "{}",
-                    errors::format_error_json(
-                        input,
-                        &source,
-                        lexer::token::Span::new(0, 0),
-                        &format!("{e}"),
-                        "error"
-                    )
-                );
-            } else {
-                eprintln!("error: {e}");
+        Err(errors) => {
+            for e in &errors {
+                if json_mode {
+                    println!(
+                        "{}",
+                        errors::format_error_json(input, &source, e.span, &e.message, "error")
+                    );
+                } else {
+                    eprint!("{}", errors::format_error(&source, e.span, &e.message));
+                }
             }
             process::exit(1);
         }

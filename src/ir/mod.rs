@@ -21,7 +21,7 @@ pub struct Function {
     pub values: Vec<ValueDef>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BasicBlock {
     pub params: Vec<(Value, IrType)>, // block parameters (SSA phi replacement)
     pub insts: Vec<Inst>,
@@ -35,7 +35,7 @@ pub struct ValueDef {
 }
 
 // every instruction produces a Value (except void ops which produce Value::VOID)
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Inst {
     pub result: Value,
     pub op: Op,
@@ -107,7 +107,7 @@ pub enum Op {
     Nop,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Terminator {
     // unconditional jump with block args
     Jump(Block, Vec<Value>),

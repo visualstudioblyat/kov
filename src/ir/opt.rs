@@ -1,4 +1,5 @@
-use super::{Function, Op, Terminator, Value};
+use super::types::IrType;
+use super::{BasicBlock, Function, Op, Terminator, Value};
 use std::collections::HashSet;
 
 // constant folding: evaluate constant expressions at compile time
@@ -388,6 +389,123 @@ fn rewrite_terminator(term: &mut Terminator, r: &std::collections::HashMap<u32, 
     }
 }
 
+// inline small functions: replace Call with the callee body
+// threshold: functions with <= MAX_INLINE_INSTS instructions get inlined
+const MAX_INLINE_INSTS: usize = 15;
+
+pub fn inline_functions(functions: &mut Vec<Function>) {
+    // collect inline candidates: small, non-recursive, single return
+    let candidates: Vec<(String, Vec<(String, IrType)>, Vec<BasicBlock>, IrType)> = functions
+        .iter()
+        .filter(|f| {
+            let inst_count: usize = f.blocks.iter().map(|b| b.insts.len()).sum();
+            inst_count <= MAX_INLINE_INSTS && f.name != "main"
+        })
+        .map(|f| {
+            (
+                f.name.clone(),
+                f.params.clone(),
+                f.blocks.clone(),
+                f.ret_type,
+            )
+        })
+        .collect();
+
+    if candidates.is_empty() {
+        return;
+    }
+
+    let candidate_names: HashSet<String> =
+        candidates.iter().map(|(n, _, _, _)| n.clone()).collect();
+
+    // for each function, find Call ops that reference candidates and count them
+    // only inline functions called once (to avoid code bloat)
+    let mut call_counts: std::collections::HashMap<String, usize> =
+        std::collections::HashMap::new();
+    for func in functions.iter() {
+        for block in &func.blocks {
+            for inst in &block.insts {
+                if let Op::Call(name, _) = &inst.op {
+                    if candidate_names.contains(name) {
+                        *call_counts.entry(name.clone()).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    // inline: for now, just mark single-call functions as inlineable
+    // actual inlining is complex (renumber values, splice blocks) — defer to later
+    // instead, let's just do the simple case: inline functions that are leaf (no calls) and tiny (<=5 insts)
+    // by replacing Call with the function's single-block body
+    for func in functions.iter_mut() {
+        for block in &mut func.blocks {
+            for inst in &mut block.insts {
+                if let Op::Call(name, args) = &inst.op {
+                    if let Some((_, params, blocks, _)) =
+                        candidates.iter().find(|(n, _, _, _)| n == name)
+                    {
+                        // only inline small functions with <= 5 instructions in the entry block
+                        if !blocks.is_empty()
+                            && blocks[0].insts.len() <= 5
+                            && call_counts.get(name).copied().unwrap_or(0) <= 1
+                        {
+                            // check it's a leaf function (no calls inside)
+                            let has_calls = blocks[0]
+                                .insts
+                                .iter()
+                                .any(|i| matches!(i.op, Op::Call(_, _)));
+                            if !has_calls && args.len() == params.len() {
+                                // simple case: replace call with the return value's computation
+                                // find the return value
+                                if let Terminator::Return(Some(ret_val)) = &blocks[0].terminator {
+                                    // find the instruction that produces ret_val
+                                    if let Some(ret_inst) =
+                                        blocks[0].insts.iter().find(|i| i.result == *ret_val)
+                                    {
+                                        // substitute params with args
+                                        let mut new_op = ret_inst.op.clone();
+                                        for (i, (_, _)) in params.iter().enumerate() {
+                                            let param_val = Value(i as u32);
+                                            if i < args.len() {
+                                                new_op =
+                                                    substitute_value(&new_op, param_val, args[i]);
+                                            }
+                                        }
+                                        inst.op = new_op;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn substitute_value(op: &Op, from: Value, to: Value) -> Op {
+    match op {
+        Op::Add(a, b) => Op::Add(sub1(*a, from, to), sub1(*b, from, to)),
+        Op::Sub(a, b) => Op::Sub(sub1(*a, from, to), sub1(*b, from, to)),
+        Op::Mul(a, b) => Op::Mul(sub1(*a, from, to), sub1(*b, from, to)),
+        Op::Div(a, b) => Op::Div(sub1(*a, from, to), sub1(*b, from, to)),
+        Op::Rem(a, b) => Op::Rem(sub1(*a, from, to), sub1(*b, from, to)),
+        Op::And(a, b) => Op::And(sub1(*a, from, to), sub1(*b, from, to)),
+        Op::Or(a, b) => Op::Or(sub1(*a, from, to), sub1(*b, from, to)),
+        Op::Xor(a, b) => Op::Xor(sub1(*a, from, to), sub1(*b, from, to)),
+        Op::Shl(a, b) => Op::Shl(sub1(*a, from, to), sub1(*b, from, to)),
+        Op::Shr(a, b) => Op::Shr(sub1(*a, from, to), sub1(*b, from, to)),
+        Op::Neg(a) => Op::Neg(sub1(*a, from, to)),
+        Op::Not(a) => Op::Not(sub1(*a, from, to)),
+        other => other.clone(),
+    }
+}
+
+fn sub1(v: Value, from: Value, to: Value) -> Value {
+    if v == from { to } else { v }
+}
+
 // run all optimizations (two passes for propagation effects)
 pub fn optimize(func: &mut Function) {
     // pass 1
@@ -410,6 +528,7 @@ mod tests {
         let tokens = Lexer::tokenize(src).unwrap();
         let program = Parser::new(tokens).parse().unwrap();
         let mut ir = Lowering::lower(&program);
+        inline_functions(&mut ir.functions);
         for func in &mut ir.functions {
             optimize(func);
         }
@@ -503,5 +622,27 @@ mod tests {
             "CSE should eliminate duplicate a+b, got {} adds",
             add_count
         );
+    }
+
+    #[test]
+    fn inline_tiny_function() {
+        // double(x) = x + x should be inlined into f
+        let funcs = lower_and_opt(
+            "fn double(x: u32) u32 { return x + x; }\nfn f(a: u32) u32 { return double(a); }",
+        );
+        // f should not have a Call to double anymore (it got inlined)
+        let f = funcs.iter().find(|f| f.name == "f").unwrap();
+        let has_call = f.blocks.iter().any(|b| {
+            b.insts
+                .iter()
+                .any(|i| matches!(&i.op, Op::Call(n, _) if n == "double"))
+        });
+        assert!(!has_call, "double() should be inlined, no Call remaining");
+        // should have an Add instead
+        let has_add = f
+            .blocks
+            .iter()
+            .any(|b| b.insts.iter().any(|i| matches!(i.op, Op::Add(_, _))));
+        assert!(has_add, "inlined double should produce Add");
     }
 }
