@@ -5,16 +5,18 @@ use std::collections::{HashMap, HashSet};
 
 pub struct TypeChecker {
     errors: Vec<TypeError>,
+    pub warnings: Vec<TypeError>,
     board_peripherals: HashMap<String, Vec<String>>,
     claimed_peripherals: HashSet<String>,
     structs: HashMap<String, Vec<(String, Ty)>>,
     enums: HashMap<String, Vec<String>>,
-    // function signatures: name → (param_types, return_type)
     fn_sigs: HashMap<String, (Vec<Ty>, Ty)>,
 }
 
 struct FnScope {
     vars: HashMap<String, Ty>,
+    var_spans: HashMap<String, Span>, // where each var was declared
+    used_vars: HashSet<String>,       // vars that were actually read
     ret_type: Ty,
     is_interrupt: bool,
 }
@@ -23,6 +25,7 @@ impl TypeChecker {
     pub fn new() -> Self {
         Self {
             errors: Vec::new(),
+            warnings: Vec::new(),
             board_peripherals: HashMap::new(),
             claimed_peripherals: HashSet::new(),
             structs: HashMap::new(),
@@ -31,7 +34,8 @@ impl TypeChecker {
         }
     }
 
-    pub fn check(mut self, program: &Program) -> Result<(), Vec<TypeError>> {
+    pub fn check(mut self, program: &Program) -> Result<Vec<TypeError>, Vec<TypeError>> {
+        // returns Ok(warnings) or Err(errors)
         // first pass: collect definitions
         for item in &program.items {
             match item {
@@ -53,7 +57,7 @@ impl TypeChecker {
         }
 
         if self.errors.is_empty() {
-            Ok(())
+            Ok(self.warnings)
         } else {
             Err(self.errors)
         }
@@ -61,6 +65,10 @@ impl TypeChecker {
 
     fn err(&mut self, span: Span, msg: String) {
         self.errors.push(TypeError { message: msg, span });
+    }
+
+    fn warn(&mut self, span: Span, msg: String) {
+        self.warnings.push(TypeError { message: msg, span });
     }
 
     fn register_board(&mut self, board: &BoardDef) {
@@ -91,6 +99,8 @@ impl TypeChecker {
     fn check_interrupt(&mut self, i: &InterruptDef) {
         let mut scope = FnScope {
             vars: HashMap::new(),
+            var_spans: HashMap::new(),
+            used_vars: HashSet::new(),
             ret_type: Ty::Void,
             is_interrupt: true,
         };
@@ -101,6 +111,8 @@ impl TypeChecker {
         let ret_type = f.ret_type.as_ref().map(Ty::from_ast).unwrap_or(Ty::Void);
         let mut scope = FnScope {
             vars: HashMap::new(),
+            var_spans: HashMap::new(),
+            used_vars: HashSet::new(),
             ret_type,
             is_interrupt,
         };
@@ -122,6 +134,13 @@ impl TypeChecker {
         }
 
         self.check_block(&f.body, &mut scope);
+
+        // warn about unused variables (skip _ prefixed)
+        for (name, span) in &scope.var_spans {
+            if !scope.used_vars.contains(name) && !name.starts_with('_') {
+                self.warn(*span, format!("unused variable: {}", name));
+            }
+        }
     }
 
     fn check_block(&mut self, block: &Block, scope: &mut FnScope) {
@@ -159,6 +178,7 @@ impl TypeChecker {
                 self.check_peripheral_claim(value, scope, *span);
 
                 scope.vars.insert(name.clone(), val_ty);
+                scope.var_spans.insert(name.clone(), *span);
             }
 
             Stmt::Assign {
@@ -319,6 +339,7 @@ impl TypeChecker {
 
             Expr::Ident(name, span) => {
                 if let Some(ty) = scope.vars.get(name) {
+                    scope.used_vars.insert(name.clone());
                     ty.clone()
                 } else {
                     self.err(*span, format!("undefined variable: {}", name));
@@ -495,7 +516,16 @@ mod tests {
     fn check(src: &str) -> Result<(), Vec<TypeError>> {
         let tokens = Lexer::tokenize(src).unwrap();
         let program = Parser::new(tokens).parse().unwrap();
-        TypeChecker::new().check(&program)
+        TypeChecker::new().check(&program).map(|_| ())
+    }
+
+    fn check_with_warnings(src: &str) -> (Result<(), Vec<TypeError>>, Vec<TypeError>) {
+        let tokens = Lexer::tokenize(src).unwrap();
+        let program = Parser::new(tokens).parse().unwrap();
+        match TypeChecker::new().check(&program) {
+            Ok(warnings) => (Ok(()), warnings),
+            Err(errors) => (Err(errors), vec![]),
+        }
     }
 
     #[test]
@@ -644,5 +674,27 @@ mod tests {
         // get() returns u32, assigning to bool should fail
         let result = check("fn get() u32 { return 42; }\nfn f() { let x: bool = get(); }");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn warns_unused_variable() {
+        let (result, warnings) = check_with_warnings("fn f() { let x = 42; }");
+        assert!(result.is_ok());
+        assert!(!warnings.is_empty(), "should warn about unused x");
+        assert!(warnings[0].message.contains("unused variable"));
+    }
+
+    #[test]
+    fn no_warn_underscore_prefix() {
+        let (result, warnings) = check_with_warnings("fn f() { let _x = 42; }");
+        assert!(result.is_ok());
+        assert!(warnings.is_empty(), "_ prefixed vars should not warn");
+    }
+
+    #[test]
+    fn no_warn_used_variable() {
+        let (result, warnings) = check_with_warnings("fn f() u32 { let x = 42; return x; }");
+        assert!(result.is_ok());
+        assert!(warnings.is_empty(), "used variable should not warn");
     }
 }

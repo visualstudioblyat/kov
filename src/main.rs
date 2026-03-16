@@ -61,11 +61,21 @@ fn compile(source: &str) -> CompileResult {
         Err(e) => die(&format!("{e}")),
     };
 
-    if let Err(type_errors) = types::check::TypeChecker::new().check(&program) {
-        for e in &type_errors {
-            eprint!("{}", errors::format_error(source, e.span, &e.message));
+    match types::check::TypeChecker::new().check(&program) {
+        Ok(warnings) => {
+            for w in &warnings {
+                eprint!(
+                    "warning: {}\n",
+                    errors::format_error(source, w.span, &w.message)
+                );
+            }
         }
-        die(&format!("{} type error(s)", type_errors.len()));
+        Err(type_errors) => {
+            for e in &type_errors {
+                eprint!("{}", errors::format_error(source, e.span, &e.message));
+            }
+            die(&format!("{} type error(s)", type_errors.len()));
+        }
     }
 
     let board_name = program.items.iter().find_map(|item| {
@@ -315,22 +325,35 @@ fn cmd_check(args: &[String]) {
         }
     };
 
-    if let Err(type_errors) = types::check::TypeChecker::new().check(&program) {
-        for e in &type_errors {
-            if json_mode {
-                println!(
-                    "{}",
-                    errors::format_error_json(input, &source, e.span, &e.message, "error")
-                );
-            } else {
-                eprint!("{}", errors::format_error(&source, e.span, &e.message));
+    match types::check::TypeChecker::new().check(&program) {
+        Ok(warnings) => {
+            for w in &warnings {
+                if json_mode {
+                    println!(
+                        "{}",
+                        errors::format_error_json(input, &source, w.span, &w.message, "warning")
+                    );
+                } else {
+                    eprintln!("warning: {}", w.message);
+                }
+            }
+            if !json_mode {
+                eprintln!("  check: ok");
             }
         }
-        process::exit(1);
-    }
-
-    if !json_mode {
-        eprintln!("  check: ok");
+        Err(type_errors) => {
+            for e in &type_errors {
+                if json_mode {
+                    println!(
+                        "{}",
+                        errors::format_error_json(input, &source, e.span, &e.message, "error")
+                    );
+                } else {
+                    eprint!("{}", errors::format_error(&source, e.span, &e.message));
+                }
+            }
+            process::exit(1);
+        }
     }
 }
 

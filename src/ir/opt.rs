@@ -272,12 +272,129 @@ pub fn strength_reduce(func: &mut Function) {
     }
 }
 
+// common subexpression elimination: if the same pure op is computed twice, reuse the first
+pub fn cse(func: &mut Function) {
+    use std::collections::HashMap;
+    // key: serialized op → first Value that computed it
+    let mut seen: HashMap<String, Value> = HashMap::new();
+    // value → replacement value
+    let mut replacements: HashMap<u32, Value> = HashMap::new();
+
+    for block in &func.blocks {
+        for inst in &block.insts {
+            // only CSE pure operations (no side effects)
+            if is_pure(&inst.op) {
+                let key = format!("{:?}", inst.op);
+                if let Some(&first) = seen.get(&key) {
+                    replacements.insert(inst.result.0, first);
+                } else {
+                    seen.insert(key, inst.result);
+                }
+            }
+        }
+    }
+
+    if replacements.is_empty() {
+        return;
+    }
+
+    // apply replacements: rewrite all uses of replaced values
+    for block in &mut func.blocks {
+        for inst in &mut block.insts {
+            inst.op = rewrite_op(&inst.op, &replacements);
+        }
+        rewrite_terminator(&mut block.terminator, &replacements);
+    }
+}
+
+fn is_pure(op: &Op) -> bool {
+    matches!(
+        op,
+        Op::Add(_, _)
+            | Op::Sub(_, _)
+            | Op::Mul(_, _)
+            | Op::Div(_, _)
+            | Op::Rem(_, _)
+            | Op::And(_, _)
+            | Op::Or(_, _)
+            | Op::Xor(_, _)
+            | Op::Shl(_, _)
+            | Op::Shr(_, _)
+            | Op::Sar(_, _)
+            | Op::Eq(_, _)
+            | Op::Ne(_, _)
+            | Op::Lt(_, _)
+            | Op::Ge(_, _)
+            | Op::Neg(_)
+            | Op::Not(_)
+    )
+}
+
+fn rewrite_val(v: Value, r: &std::collections::HashMap<u32, Value>) -> Value {
+    r.get(&v.0).copied().unwrap_or(v)
+}
+
+fn rewrite_op(op: &Op, r: &std::collections::HashMap<u32, Value>) -> Op {
+    match op {
+        Op::Add(a, b) => Op::Add(rewrite_val(*a, r), rewrite_val(*b, r)),
+        Op::Sub(a, b) => Op::Sub(rewrite_val(*a, r), rewrite_val(*b, r)),
+        Op::Mul(a, b) => Op::Mul(rewrite_val(*a, r), rewrite_val(*b, r)),
+        Op::Div(a, b) => Op::Div(rewrite_val(*a, r), rewrite_val(*b, r)),
+        Op::Rem(a, b) => Op::Rem(rewrite_val(*a, r), rewrite_val(*b, r)),
+        Op::And(a, b) => Op::And(rewrite_val(*a, r), rewrite_val(*b, r)),
+        Op::Or(a, b) => Op::Or(rewrite_val(*a, r), rewrite_val(*b, r)),
+        Op::Xor(a, b) => Op::Xor(rewrite_val(*a, r), rewrite_val(*b, r)),
+        Op::Shl(a, b) => Op::Shl(rewrite_val(*a, r), rewrite_val(*b, r)),
+        Op::Shr(a, b) => Op::Shr(rewrite_val(*a, r), rewrite_val(*b, r)),
+        Op::Sar(a, b) => Op::Sar(rewrite_val(*a, r), rewrite_val(*b, r)),
+        Op::Eq(a, b) => Op::Eq(rewrite_val(*a, r), rewrite_val(*b, r)),
+        Op::Ne(a, b) => Op::Ne(rewrite_val(*a, r), rewrite_val(*b, r)),
+        Op::Lt(a, b) => Op::Lt(rewrite_val(*a, r), rewrite_val(*b, r)),
+        Op::Ge(a, b) => Op::Ge(rewrite_val(*a, r), rewrite_val(*b, r)),
+        Op::Ltu(a, b) => Op::Ltu(rewrite_val(*a, r), rewrite_val(*b, r)),
+        Op::Geu(a, b) => Op::Geu(rewrite_val(*a, r), rewrite_val(*b, r)),
+        Op::Neg(a) => Op::Neg(rewrite_val(*a, r)),
+        Op::Not(a) => Op::Not(rewrite_val(*a, r)),
+        Op::Load(a, t) => Op::Load(rewrite_val(*a, r), *t),
+        Op::Store(a, b) => Op::Store(rewrite_val(*a, r), rewrite_val(*b, r)),
+        Op::VolatileLoad(a, t) => Op::VolatileLoad(rewrite_val(*a, r), *t),
+        Op::VolatileStore(a, b) => Op::VolatileStore(rewrite_val(*a, r), rewrite_val(*b, r)),
+        Op::Call(name, args) => Op::Call(
+            name.clone(),
+            args.iter().map(|a| rewrite_val(*a, r)).collect(),
+        ),
+        Op::Zext(a, t) => Op::Zext(rewrite_val(*a, r), *t),
+        Op::Sext(a, t) => Op::Sext(rewrite_val(*a, r), *t),
+        Op::Trunc(a, t) => Op::Trunc(rewrite_val(*a, r), *t),
+        Op::MakeError(a) => Op::MakeError(rewrite_val(*a, r)),
+        other => other.clone(),
+    }
+}
+
+fn rewrite_terminator(term: &mut Terminator, r: &std::collections::HashMap<u32, Value>) {
+    match term {
+        Terminator::Return(Some(v)) => *v = rewrite_val(*v, r),
+        Terminator::ReturnError(a, b) => {
+            *a = rewrite_val(*a, r);
+            *b = rewrite_val(*b, r);
+        }
+        Terminator::BranchIf { cond, .. } => *cond = rewrite_val(*cond, r),
+        Terminator::Jump(_, args) => {
+            for a in args {
+                *a = rewrite_val(*a, r);
+            }
+        }
+        _ => {}
+    }
+}
+
 // run all optimizations (two passes for propagation effects)
 pub fn optimize(func: &mut Function) {
     // pass 1
     constant_fold(func);
     strength_reduce(func);
-    // pass 2 — folding may create new constants
+    cse(func);
+    // pass 2 — folding may create new constants after CSE
     constant_fold(func);
     dead_code_elimination(func);
 }
@@ -364,5 +481,27 @@ mod tests {
             .iter()
             .any(|b| b.insts.iter().any(|i| matches!(i.op, Op::ConstI32(20))));
         assert!(has_twenty, "2+3 then *4 should fold to 20");
+    }
+
+    #[test]
+    fn cse_eliminates_duplicate() {
+        // a + b computed twice — second should reuse first
+        let funcs = lower_and_opt(
+            "fn f(a: u32, b: u32) u32 { let x = a + b; let y = a + b; return x + y; }",
+        );
+        let func = &funcs[0];
+        // should have only one Add(a, b), not two
+        let add_count = func
+            .blocks
+            .iter()
+            .flat_map(|b| b.insts.iter())
+            .filter(|i| matches!(i.op, Op::Add(_, _)))
+            .count();
+        // one for a+b (CSE'd) and one for x+y = 2 total
+        assert!(
+            add_count <= 2,
+            "CSE should eliminate duplicate a+b, got {} adds",
+            add_count
+        );
     }
 }
