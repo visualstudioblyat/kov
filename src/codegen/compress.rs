@@ -1,5 +1,3 @@
-use super::encode::*;
-
 fn try_compress(inst: u32) -> Option<u16> {
     let opcode = inst & 0x7F;
     let rd = ((inst >> 7) & 0x1F) as u16;
@@ -29,12 +27,12 @@ fn try_compress(inst: u32) -> Option<u16> {
             if imm == 0 && rd != 0 && rs1 != 0 {
                 return Some(0x8002 | (rd << 7) | (rs1 << 2)); // c.mv
             }
-            if rs1 == 0 && rd != 0 && imm >= -32 && imm <= 31 {
+            if rs1 == 0 && rd != 0 && (-32..=31).contains(&imm) {
                 let imm = imm as u16;
                 return Some(0x4001 | ((imm >> 5) & 1) << 12 | (rd << 7) | ((imm & 0x1F) << 2));
                 // c.li
             }
-            if rd == rs1 && rd != 0 && imm != 0 && imm >= -32 && imm <= 31 {
+            if rd == rs1 && rd != 0 && imm != 0 && (-32..=31).contains(&imm) {
                 let imm = imm as u16;
                 return Some(0x0001 | ((imm >> 5) & 1) << 12 | (rd << 7) | ((imm & 0x1F) << 2));
                 // c.addi
@@ -51,7 +49,7 @@ fn try_compress(inst: u32) -> Option<u16> {
             let offset = (imm20 << 20) | (imm19_12 << 12) | (imm11 << 11) | (imm10_1 << 1);
             let offset = (offset << 11) >> 11;
 
-            if offset >= -2048 && offset <= 2046 && offset % 2 == 0 {
+            if (-2048..=2046).contains(&offset) && offset % 2 == 0 {
                 let off = offset as u16;
                 return Some(
                     0xA001
