@@ -1,5 +1,6 @@
 pub mod types;
 pub mod lower;
+pub mod globals;
 
 use types::IrType;
 

@@ -6,6 +6,7 @@ use super::types::IrType;
 
 pub struct Lowering {
     pub functions: Vec<Function>,
+    pub globals: super::globals::GlobalTable,
 }
 
 // tracks what a variable represents for MMIO resolution
@@ -26,16 +27,33 @@ struct FnBuilder<'a> {
 
 impl Lowering {
     pub fn lower(program: &Program) -> Self {
+        use super::globals::{GlobalTable, GlobalInit};
+
         let periph_map = PeripheralMap::from_program(program);
         let mut functions = Vec::new();
+        let mut globals = GlobalTable::new();
 
+        // first pass: collect globals
+        for item in &program.items {
+            if let TopItem::Static(s) = item {
+                let ty = ast_type_to_ir(&Some(s.ty.clone()));
+                let init = match &s.value {
+                    Expr::IntLit(v, _) => GlobalInit::Int(*v as i32),
+                    _ => GlobalInit::Zero,
+                };
+                globals.add_global(s.name.clone(), ty, init, s.mutable);
+            }
+        }
+
+        // second pass: lower functions (including statics inside interrupt bodies)
         for item in &program.items {
             match item {
                 TopItem::Function(f) => {
+                    collect_body_statics(&f.body, &mut globals);
                     functions.push(lower_fn(f, &periph_map));
                 }
                 TopItem::Interrupt(i) => {
-                    // lower interrupt as a regular function (wrapper generated in codegen)
+                    collect_body_statics(&i.body, &mut globals);
                     let fake_fn = ast::FnDef {
                         name: i.fn_name.clone(),
                         attrs: Vec::new(),
@@ -47,11 +65,11 @@ impl Lowering {
                     };
                     functions.push(lower_fn(&fake_fn, &periph_map));
                 }
-                _ => {} // board, struct, etc handled in type checking
+                _ => {}
             }
         }
 
-        Self { functions }
+        Self { functions, globals }
     }
 }
 
@@ -72,6 +90,28 @@ fn ast_type_to_ir(ty: &Option<ast::Type>) -> IrType {
             // named types, arrays etc → i32 for now (full type resolution later)
             _ => IrType::I32,
         },
+    }
+}
+
+// scan a block for static declarations and add them to the global table
+fn collect_body_statics(block: &ast::Block, globals: &mut super::globals::GlobalTable) {
+    use super::globals::GlobalInit;
+    for stmt in &block.stmts {
+        if let Stmt::Let { name, ty: Some(ty), value, mutable, .. } = stmt {
+            // detect "static mut counter: u32 = 0" pattern
+            // (the parser lowered static inside functions to Let with ty)
+            let ir_ty = ast_type_to_ir(&Some(ty.clone()));
+            if *mutable {
+                let init = match value {
+                    Expr::IntLit(v, _) => GlobalInit::Int(*v as i32),
+                    _ => GlobalInit::Zero,
+                };
+                // only add if it looks like a static (has explicit type + mutable)
+                if globals.find(name).is_none() {
+                    globals.add_global(name.clone(), ir_ty, init, true);
+                }
+            }
+        }
     }
 }
 
