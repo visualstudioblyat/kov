@@ -38,7 +38,7 @@ pub fn format_error(source: &str, span: Span, message: &str) -> String {
     )
 }
 
-fn locate(source: &str, byte_offset: u32) -> (usize, usize, &str) {
+pub fn locate(source: &str, byte_offset: u32) -> (usize, usize, &str) {
     let offset = byte_offset as usize;
     let mut line_num = 1;
     let mut line_start = 0;
