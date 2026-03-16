@@ -1,0 +1,19 @@
+board esp32c3 {
+    gpio: GPIO @ 0x6000_4000,
+    uart: UART @ 0x6000_0000,
+    clock: 160_000_000,
+}
+
+#[stack(512)]
+fn main(b: &mut esp32c3) {
+    let led = b.gpio.pin(2, .output);
+
+    for i in 0..5 {
+        match i {
+            0 => led.high(),
+            1 => led.low(),
+            2 => led.high(),
+            _ => led.low(),
+        }
+    }
+}

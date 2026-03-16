@@ -410,4 +410,17 @@ mod tests {
         });
         assert!(has_sw, "expected SW instruction for global write");
     }
+
+    #[test]
+    fn codegen_match() {
+        let code = compile("fn f(x: u32) u32 { match x { 0 => 10, 1 => 20, _ => 30, } }");
+        assert!(!code.is_empty());
+        assert_eq!(code.len() % 4, 0);
+        // should have BNE instructions for branch chain
+        let bne_count = code.windows(4).filter(|w| {
+            let inst = u32::from_le_bytes([w[0], w[1], w[2], w[3]]);
+            inst & 0x707F == 0x1063 // BNE opcode
+        }).count();
+        assert!(bne_count >= 2, "match should emit BNE for each int pattern arm");
+    }
 }

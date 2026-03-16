@@ -421,7 +421,72 @@ impl<'a> FnBuilder<'a> {
                 }
             }
 
-            _ => {} // match, defer, critical_section — TODO
+            Stmt::Match { expr, arms, .. } => {
+                let scrutinee = self.lower_expr(expr);
+                let merge_bb = self.func.new_block();
+
+                // build chain: for each arm, compare → arm body or next check
+                let mut arm_blocks: Vec<(Block, Block)> = Vec::new(); // (check_bb, body_bb)
+                for _ in arms {
+                    let check = self.func.new_block();
+                    let body = self.func.new_block();
+                    arm_blocks.push((check, body));
+                }
+
+                // jump to first check
+                if let Some(&(first_check, _)) = arm_blocks.first() {
+                    self.func.set_terminator(self.current_block, Terminator::Jump(first_check, vec![]));
+                } else {
+                    self.func.set_terminator(self.current_block, Terminator::Jump(merge_bb, vec![]));
+                }
+
+                for (i, arm) in arms.iter().enumerate() {
+                    let (check_bb, body_bb) = arm_blocks[i];
+                    let next = if i + 1 < arm_blocks.len() {
+                        arm_blocks[i + 1].0
+                    } else {
+                        merge_bb // fallthrough if no match (should have wildcard)
+                    };
+
+                    // check block: compare scrutinee to pattern
+                    self.current_block = check_bb;
+                    match &arm.pattern {
+                        ast::Pattern::IntLit(v) => {
+                            let pat_val = self.emit(Op::ConstI32(*v as i32), IrType::I32);
+                            let cond = self.emit(Op::Eq(scrutinee, pat_val), IrType::Bool);
+                            self.func.set_terminator(self.current_block, Terminator::BranchIf {
+                                cond,
+                                then_block: body_bb,
+                                then_args: vec![],
+                                else_block: next,
+                                else_args: vec![],
+                            });
+                        }
+                        ast::Pattern::Wildcard | ast::Pattern::Ident(_) => {
+                            // wildcard or binding: always matches
+                            if let ast::Pattern::Ident(name) = &arm.pattern {
+                                self.vars.insert(name.clone(), scrutinee);
+                            }
+                            self.func.set_terminator(self.current_block, Terminator::Jump(body_bb, vec![]));
+                        }
+                        ast::Pattern::Variant(_, _) => {
+                            // TODO: enum variant matching
+                            self.func.set_terminator(self.current_block, Terminator::Jump(body_bb, vec![]));
+                        }
+                    }
+
+                    // body block
+                    self.current_block = body_bb;
+                    self.lower_expr(&arm.body);
+                    if matches!(self.func.blocks[self.current_block.0 as usize].terminator, Terminator::None) {
+                        self.func.set_terminator(self.current_block, Terminator::Jump(merge_bb, vec![]));
+                    }
+                }
+
+                self.current_block = merge_bb;
+            }
+
+            _ => {} // defer, critical_section — TODO
         }
     }
 
@@ -650,6 +715,28 @@ mod tests {
             b.insts.iter().any(|i| matches!(&i.op, Op::GlobalAddr(n) if n == "ticks"))
         });
         assert!(has_global, "should reference 'ticks' global");
+        println!("{}", func);
+    }
+
+    #[test]
+    fn lower_match_int_patterns() {
+        let ir = lower("fn f(x: u32) u32 { match x { 0 => 10, 1 => 20, _ => 30, } }");
+        let func = &ir.functions[0];
+        // 3 arms = 3 check blocks + 3 body blocks + entry + merge = at least 8
+        assert!(func.blocks.len() >= 7, "match with 3 arms needs multiple blocks, got {}", func.blocks.len());
+        // should have Eq comparisons for int patterns
+        let eq_count = func.blocks.iter().flat_map(|b| b.insts.iter())
+            .filter(|i| matches!(&i.op, Op::Eq(_, _)))
+            .count();
+        assert!(eq_count >= 2, "should have at least 2 Eq comparisons for int patterns");
+        println!("{}", func);
+    }
+
+    #[test]
+    fn lower_match_wildcard_only() {
+        let ir = lower("fn f(x: u32) u32 { match x { _ => 42, } }");
+        let func = &ir.functions[0];
+        assert!(func.blocks.len() >= 3, "match with wildcard needs check+body+merge");
         println!("{}", func);
     }
 }
