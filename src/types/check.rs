@@ -624,4 +624,25 @@ mod tests {
             panic!("{} type errors", errors.len());
         }
     }
+
+    #[test]
+    fn local_type_inference() {
+        // let x = 42 should infer u32, then x + 1 should work
+        assert!(check("fn f() { let x = 42; let y = x + 1; }").is_ok());
+    }
+
+    #[test]
+    fn inference_from_fn_call() {
+        // get() returns u32, so x should be u32
+        assert!(
+            check("fn get() u32 { return 42; }\nfn f() { let x = get(); let y: u32 = x; }").is_ok()
+        );
+    }
+
+    #[test]
+    fn inference_mismatch_caught() {
+        // get() returns u32, assigning to bool should fail
+        let result = check("fn get() u32 { return 42; }\nfn f() { let x: bool = get(); }");
+        assert!(result.is_err());
+    }
 }

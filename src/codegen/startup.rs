@@ -83,6 +83,14 @@ pub fn emit_startup(emitter: &mut Emitter, board: &BoardConfig) {
     emitter.emit32(csrrci(ZERO, MSTATUS, 8)); // disable interrupts
     emitter.emit32(wfi());
     emitter.emit_jump(j_offset(0), "_halt");
+
+    // panic handler: disable interrupts, halt
+    // called by bounds checks, failed assertions, etc.
+    // a0 = error code (optional)
+    emitter.label("panic");
+    emitter.emit32(csrrci(ZERO, MSTATUS, 8));
+    emitter.emit32(wfi());
+    emitter.emit_jump(j_offset(0), "panic");
 }
 
 // emit interrupt vector table — vectored mode, jumps to handlers
