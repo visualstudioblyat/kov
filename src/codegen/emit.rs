@@ -2,17 +2,18 @@ use std::collections::HashMap;
 
 pub struct Emitter {
     pub code: Vec<u8>,
-    pub labels: HashMap<String, u32>,
-    fixups: Vec<Fixup>,
+    pub labels: HashMap<String, usize>,
+    pub fixups: Vec<Fixup>,
 }
 
-struct Fixup {
-    offset: u32,    // byte offset in code where the instruction lives
-    target: String, // label name
-    kind: FixupKind,
+pub struct Fixup {
+    pub offset: usize,
+    pub label: String,
+    pub kind: FixupKind,
 }
 
-enum FixupKind {
+#[derive(Copy, Clone)]
+pub enum FixupKind {
     Branch, // B-type, ±4KB
     Jump,   // J-type, ±1MB
 }
@@ -35,14 +36,14 @@ impl Emitter {
     }
 
     pub fn label(&mut self, name: &str) {
-        self.labels.insert(name.to_string(), self.pos());
+        self.labels.insert(name.to_string(), self.code.len());
     }
 
     // emit a branch with placeholder offset, fix up later
     pub fn emit_branch(&mut self, base_inst: u32, target: &str) {
         self.fixups.push(Fixup {
-            offset: self.pos(),
-            target: target.to_string(),
+            offset: self.pos() as usize,
+            label: target.to_string(),
             kind: FixupKind::Branch,
         });
         self.emit32(base_inst);
@@ -51,8 +52,8 @@ impl Emitter {
     // emit a jump with placeholder offset, fix up later
     pub fn emit_jump(&mut self, base_inst: u32, target: &str) {
         self.fixups.push(Fixup {
-            offset: self.pos(),
-            target: target.to_string(),
+            offset: self.pos() as usize,
+            label: target.to_string(),
             kind: FixupKind::Jump,
         });
         self.emit32(base_inst);
@@ -60,17 +61,17 @@ impl Emitter {
 
     pub fn resolve(&mut self) -> Result<(), String> {
         for fixup in &self.fixups {
-            let target_addr = match self.labels.get(&fixup.target) {
+            let target_addr = match self.labels.get(&fixup.label) {
                 Some(&addr) => addr,
                 None => {
                     // unresolved external → NOP so it doesn't self-loop
-                    let idx = fixup.offset as usize;
+                    let idx = fixup.offset;
                     self.code[idx..idx + 4].copy_from_slice(&0x00000013u32.to_le_bytes());
                     continue;
                 }
             };
             let offset = target_addr as i32 - fixup.offset as i32;
-            let idx = fixup.offset as usize;
+            let idx = fixup.offset;
 
             // read the existing instruction
             let mut inst = u32::from_le_bytes([
@@ -85,7 +86,7 @@ impl Emitter {
                     if !(-4096..=4095).contains(&offset) {
                         return Err(format!(
                             "branch to {} out of range: {}",
-                            fixup.target, offset
+                            fixup.label, offset
                         ));
                     }
                     // patch B-type immediate bits
@@ -93,7 +94,7 @@ impl Emitter {
                 }
                 FixupKind::Jump => {
                     if !(-1048576..=1048575).contains(&offset) {
-                        return Err(format!("jump to {} out of range: {}", fixup.target, offset));
+                        return Err(format!("jump to {} out of range: {}", fixup.label, offset));
                     }
                     // patch J-type immediate bits
                     inst = patch_j_imm(inst, offset);

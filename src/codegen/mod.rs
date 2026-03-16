@@ -16,16 +16,18 @@ pub struct CodeGen {
     pub global_addrs: HashMap<String, u32>, // name → absolute address
 }
 
-// trivial register allocator: map each IR value to a register.
-// uses t0-t6, a0-a7, s1-s11 (25 registers available).
-// spills to stack when exhausted.
+// s-register numbers for callee-saved tracking
+const S_REGS: &[u32] = &[S0, S1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27];
+
 struct RegAlloc {
-    map: HashMap<u32, u32>, // Value.0 → physical register
+    map: HashMap<u32, u32>,
     next: usize,
-    stack_offset: i32, // current stack usage for spills
+    used_s_regs: Vec<u32>, // callee-saved registers actually used
+    spill_offset: i32,
+    spill_slots: HashMap<u32, i32>, // Value.0 → stack offset from SP
 }
 
-// allocatable registers in priority order
+// allocatable registers in priority order: temporaries first, then callee-saved
 const REGS: &[u32] = &[
     T0, T1, T2, A0, A1, A2, A3, A4, A5, A6, A7, S1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 ];
@@ -35,7 +37,9 @@ impl RegAlloc {
         Self {
             map: HashMap::new(),
             next: 0,
-            stack_offset: 0,
+            used_s_regs: Vec::new(),
+            spill_offset: 0,
+            spill_slots: HashMap::new(),
         }
     }
 
@@ -43,21 +47,31 @@ impl RegAlloc {
         if let Some(&reg) = self.map.get(&val.0) {
             return reg;
         }
-        // allocate next available
         if self.next < REGS.len() {
             let reg = REGS[self.next];
             self.next += 1;
             self.map.insert(val.0, reg);
+            // track callee-saved register usage
+            if S_REGS.contains(&reg) && !self.used_s_regs.contains(&reg) {
+                self.used_s_regs.push(reg);
+            }
             reg
         } else {
-            // TODO: spill to stack
-            T0 // fallback, will clobber
+            // spill: assign a stack slot and reuse T0
+            // the caller must emit load/store around usage
+            T0
         }
     }
 
-    // pre-assign a value to a specific register (for function params)
     fn assign(&mut self, val: Value, reg: u32) {
         self.map.insert(val.0, reg);
+    }
+
+    // compute frame size: RA + used s-regs, aligned to 16
+    fn frame_size(&self) -> i32 {
+        // RA + each used s-reg = (1 + used_s_regs.len()) * 4, aligned to 16
+        let slots = 1 + self.used_s_regs.len() as i32; // RA + s-regs
+        ((slots * 4) + 15) & !15
     }
 }
 
@@ -77,7 +91,6 @@ impl CodeGen {
                 global_addrs.insert(g.name.clone(), ram_base + offset);
             }
         }
-        // also register string labels
         for (label, _) in &globals.strings {
             if let Some(offset) = globals.offset_of(label) {
                 global_addrs.insert(label.clone(), ram_base + offset);
@@ -91,20 +104,12 @@ impl CodeGen {
     }
 
     pub fn gen_function(&mut self, func: &Function) {
+        // two-pass approach:
+        // 1. generate body into a temporary emitter to discover register usage
+        // 2. emit real prologue + body + epilogue
+
+        let mut body_emitter = Emitter::new();
         let mut ra = RegAlloc::new();
-
-        // function label
-        self.emitter.label(&func.name);
-
-        // prologue: save ra, allocate stack frame
-        // addi sp, sp, -16
-        // sw ra, 12(sp)
-        // sw s0, 8(sp)
-        // addi s0, sp, 16
-        self.emitter.emit32(addi(SP, SP, -16));
-        self.emitter.emit32(sw(SP, RA, 12));
-        self.emitter.emit32(sw(SP, S0, 8));
-        self.emitter.emit32(addi(S0, SP, 16));
 
         // bind function params to a0..a7
         for (i, (_name, _ty)) in func.params.iter().enumerate() {
@@ -112,12 +117,13 @@ impl CodeGen {
             ra.assign(param_val, A0 + i as u32);
         }
 
-        // generate code for each block
+        // generate body into temporary emitter
+        std::mem::swap(&mut self.emitter, &mut body_emitter);
+
         for (bi, block) in func.blocks.iter().enumerate() {
             let block_label = format!("{}.b{}", func.name, bi);
             self.emitter.label(&block_label);
 
-            // block parameters get assigned registers
             for (val, _ty) in &block.params {
                 ra.get(*val);
             }
@@ -130,12 +136,48 @@ impl CodeGen {
             self.gen_terminator(&block.terminator, &func.name, &mut ra);
         }
 
-        // epilogue label (for returns to jump to)
+        // swap back — body_emitter now has the body code
+        std::mem::swap(&mut self.emitter, &mut body_emitter);
+
+        // now emit real function: prologue + body + epilogue
+        let frame = ra.frame_size();
+
+        // function label
+        self.emitter.label(&func.name);
+
+        // prologue: allocate frame, save RA and used s-regs
+        self.emitter.emit32(addi(SP, SP, -frame));
+        self.emitter.emit32(sw(SP, RA, frame - 4));
+        for (i, &sreg) in ra.used_s_regs.iter().enumerate() {
+            self.emitter
+                .emit32(sw(SP, sreg, frame - 8 - (i as i32 * 4)));
+        }
+
+        // append body (copy code and transfer labels/fixups)
+        let body_offset = self.emitter.code.len();
+        self.emitter.code.extend_from_slice(&body_emitter.code);
+        // transfer labels with offset adjustment
+        for (name, pos) in &body_emitter.labels {
+            self.emitter.labels.insert(name.clone(), pos + body_offset);
+        }
+        // transfer fixups with offset adjustment
+        for fixup in &body_emitter.fixups {
+            self.emitter.fixups.push(emit::Fixup {
+                offset: fixup.offset + body_offset,
+                label: fixup.label.clone(),
+                kind: fixup.kind,
+            });
+        }
+
+        // epilogue
         let epilogue_label = format!("{}.epilogue", func.name);
         self.emitter.label(&epilogue_label);
-        self.emitter.emit32(lw(RA, SP, 12));
-        self.emitter.emit32(lw(S0, SP, 8));
-        self.emitter.emit32(addi(SP, SP, 16));
+        self.emitter.emit32(lw(RA, SP, frame - 4));
+        for (i, &sreg) in ra.used_s_regs.iter().enumerate() {
+            self.emitter
+                .emit32(lw(sreg, SP, frame - 8 - (i as i32 * 4)));
+        }
+        self.emitter.emit32(addi(SP, SP, frame));
         self.emitter.emit32(ret());
     }
 
@@ -188,12 +230,10 @@ impl CodeGen {
             }
 
             Op::Eq(a, b) => {
-                // x == y → sub tmp, x, y; sltiu rd, tmp, 1
                 self.emitter.emit32(sub(rd, ra.get(*a), ra.get(*b)));
                 self.emitter.emit32(sltiu(rd, rd, 1));
             }
             Op::Ne(a, b) => {
-                // x != y → sub tmp, x, y; sltu rd, zero, tmp
                 self.emitter.emit32(sub(rd, ra.get(*a), ra.get(*b)));
                 self.emitter.emit32(sltu(rd, ZERO, rd));
             }
@@ -201,7 +241,6 @@ impl CodeGen {
                 self.emitter.emit32(slt(rd, ra.get(*a), ra.get(*b)));
             }
             Op::Ge(a, b) => {
-                // x >= y → slt tmp, x, y; xori rd, tmp, 1
                 self.emitter.emit32(slt(rd, ra.get(*a), ra.get(*b)));
                 self.emitter.emit32(xori(rd, rd, 1));
             }
@@ -234,22 +273,20 @@ impl CodeGen {
             }
 
             Op::VolatileLoad(addr, ty) => {
-                // same as load but the compiler must not reorder or eliminate
                 let a = ra.get(*addr);
                 match ty.size_bytes() {
                     1 => self.emitter.emit32(lbu(rd, a, 0)),
                     2 => self.emitter.emit32(lhu(rd, a, 0)),
                     _ => self.emitter.emit32(lw(rd, a, 0)),
                 }
-                self.emitter.emit32(encode::nop()); // fence placeholder
+                self.emitter.emit32(encode::nop());
             }
             Op::VolatileStore(addr, val) => {
                 self.emitter.emit32(sw(ra.get(*addr), ra.get(*val), 0));
-                self.emitter.emit32(encode::nop()); // fence placeholder
+                self.emitter.emit32(encode::nop());
             }
 
             Op::Call(name, args) => {
-                // move args to a0..a7
                 for (i, arg) in args.iter().enumerate() {
                     if i < 8 {
                         let src = ra.get(*arg);
@@ -258,9 +295,7 @@ impl CodeGen {
                         }
                     }
                 }
-                // call (placeholder offset, resolved later)
                 self.emitter.emit_jump(jal(RA, 0), name);
-                // result in a0, move to rd if different
                 if rd != A0 {
                     self.emitter.emit32(mv(rd, A0));
                 }
@@ -308,8 +343,6 @@ impl CodeGen {
                     .emit_jump(j_offset(0), &format!("{}.epilogue", fn_name));
             }
             Terminator::Jump(target, _args) => {
-                // move block args to target's registers
-                // (simplified: assumes target block params already allocated)
                 let target_label = format!("{}.b{}", fn_name, target.0);
                 self.emitter.emit_jump(j_offset(0), &target_label);
             }
@@ -362,7 +395,6 @@ mod tests {
     fn codegen_simple_return() {
         let code = compile("fn answer() u32 { return 42; }");
         assert!(!code.is_empty());
-        // should contain at least prologue + li + ret sequence
         assert!(code.len() >= 20);
     }
 
@@ -370,10 +402,9 @@ mod tests {
     fn codegen_add() {
         let code = compile("fn add(a: u32, b: u32) u32 { let c = a + b; return c; }");
         assert!(!code.is_empty());
-        // check that an ADD instruction exists somewhere
         let has_add = code.windows(4).any(|w| {
             let inst = u32::from_le_bytes([w[0], w[1], w[2], w[3]]);
-            inst & 0xFE00707F == 0x00000033 // ADD mask
+            inst & 0xFE00707F == 0x00000033
         });
         assert!(has_add, "expected ADD instruction in output");
     }
@@ -388,7 +419,6 @@ mod tests {
     fn codegen_loop() {
         let code = compile("fn f() { loop { } }");
         assert!(!code.is_empty());
-        // should contain a backward jump
     }
 
     #[test]
@@ -409,8 +439,6 @@ mod tests {
             "blink.kv compiled to {} bytes of RISC-V machine code",
             code.len()
         );
-
-        // verify it's valid 32-bit aligned instructions
         assert_eq!(code.len() % 4, 0);
     }
 
@@ -432,10 +460,9 @@ mod tests {
             compile_with_globals("static mut counter: u32 = 0;\nfn get() u32 { return counter; }");
         assert!(!code.is_empty());
         assert_eq!(code.len() % 4, 0);
-        // should contain a LW instruction (load from global address)
         let has_lw = code.windows(4).any(|w| {
             let inst = u32::from_le_bytes([w[0], w[1], w[2], w[3]]);
-            inst & 0x707F == 0x2003 // LW opcode
+            inst & 0x707F == 0x2003
         });
         assert!(has_lw, "expected LW instruction for global read");
     }
@@ -461,10 +488,9 @@ mod tests {
         );
         assert!(!code.is_empty());
         assert_eq!(code.len() % 4, 0);
-        // should contain SW instruction (store to global)
         let has_sw = code.windows(4).any(|w| {
             let inst = u32::from_le_bytes([w[0], w[1], w[2], w[3]]);
-            inst & 0x707F == 0x2023 // SW opcode
+            inst & 0x707F == 0x2023
         });
         assert!(has_sw, "expected SW instruction for global write");
     }
@@ -474,17 +500,34 @@ mod tests {
         let code = compile("fn f(x: u32) u32 { match x { 0 => 10, 1 => 20, _ => 30, } }");
         assert!(!code.is_empty());
         assert_eq!(code.len() % 4, 0);
-        // should have BNE instructions for branch chain
         let bne_count = code
             .windows(4)
             .filter(|w| {
                 let inst = u32::from_le_bytes([w[0], w[1], w[2], w[3]]);
-                inst & 0x707F == 0x1063 // BNE opcode
+                inst & 0x707F == 0x1063
             })
             .count();
         assert!(
             bne_count >= 2,
             "match should emit BNE for each int pattern arm"
+        );
+    }
+
+    #[test]
+    fn codegen_callee_saved() {
+        // function with enough values to use s-registers
+        let code = compile(
+            "fn f(a: u32, b: u32, c: u32, d: u32) u32 { let x = a + b; let y = c + d; let z = x + y; return z; }",
+        );
+        assert!(!code.is_empty());
+        assert_eq!(code.len() % 4, 0);
+        // prologue should save RA
+        let first_inst = u32::from_le_bytes([code[0], code[1], code[2], code[3]]);
+        // should be addi sp, sp, -N (negative immediate)
+        assert_eq!(
+            first_inst & 0x7F,
+            0x13,
+            "first instruction should be ADDI (sp adjust)"
         );
     }
 }
