@@ -43,7 +43,10 @@ pub struct RunOutput {
 
 /// compile kov source to RISC-V machine code
 pub fn compile(source: &str) -> Result<CompileOutput, Vec<Diagnostic>> {
+    #[cfg(not(target_arch = "wasm32"))]
     let start = std::time::Instant::now();
+    #[cfg(target_arch = "wasm32")]
+    let start_ms = 0.0f64;
 
     let tokens = lexer::Lexer::tokenize(source).map_err(|e| {
         vec![Diagnostic {
@@ -204,7 +207,16 @@ pub fn compile(source: &str) -> Result<CompileOutput, Vec<Diagnostic>> {
             .as_ref()
             .map(|b| b.stack_top())
             .unwrap_or(0x2000_8000),
-        compile_ms: start.elapsed().as_secs_f64() * 1000.0,
+        compile_ms: {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                start.elapsed().as_secs_f64() * 1000.0
+            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                start_ms
+            }
+        },
         diagnostics,
     })
 }
