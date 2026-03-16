@@ -26,12 +26,14 @@ const S_REGS: &[u32] = &[S0, S1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27];
 
 struct RegAlloc {
     map: HashMap<u32, u32>, // Value.0 → register
-    next: usize,
-    used_s_regs: Vec<u32>,          // callee-saved registers actually used
-    spill_count: i32,               // number of spilled values
-    spill_slots: HashMap<u32, i32>, // Value.0 → spill slot index
-    pending_spills: Vec<(u32, u32, i32)>, // (old_val_id, register, slot_offset) to emit SW
-    pending_loads: Vec<(u32, i32)>, // (register, slot_offset) to emit LW before use
+    free_regs: Vec<u32>,    // available registers (stack, pop to allocate)
+    used_s_regs: Vec<u32>,  // callee-saved registers actually used
+    spill_count: i32,
+    spill_slots: HashMap<u32, i32>,
+    pending_spills: Vec<(u32, u32, i32)>,
+    pending_loads: Vec<(u32, i32)>,
+    last_use: HashMap<u32, usize>, // Value.0 → instruction index of last use
+    current_inst: usize,           // current instruction index during codegen
 }
 
 // allocatable registers in priority order: temporaries first, then callee-saved
@@ -39,75 +41,163 @@ const REGS: &[u32] = &[
     T0, T1, T2, A0, A1, A2, A3, A4, A5, A6, A7, S1, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
 ];
 
+// compute last-use index for every value in a function
+fn compute_last_use(func: &Function) -> HashMap<u32, usize> {
+    let mut last_use: HashMap<u32, usize> = HashMap::new();
+    let mut idx = 0usize;
+    for block in &func.blocks {
+        for inst in &block.insts {
+            for v in op_uses(&inst.op) {
+                last_use.insert(v, idx);
+            }
+            idx += 1;
+        }
+        // terminators also use values
+        for v in term_uses(&block.terminator) {
+            last_use.insert(v, idx);
+        }
+        idx += 1;
+    }
+    last_use
+}
+
+fn op_uses(op: &Op) -> Vec<u32> {
+    match op {
+        Op::Add(a, b)
+        | Op::Sub(a, b)
+        | Op::Mul(a, b)
+        | Op::Div(a, b)
+        | Op::Rem(a, b)
+        | Op::And(a, b)
+        | Op::Or(a, b)
+        | Op::Xor(a, b)
+        | Op::Shl(a, b)
+        | Op::Shr(a, b)
+        | Op::Sar(a, b)
+        | Op::Eq(a, b)
+        | Op::Ne(a, b)
+        | Op::Lt(a, b)
+        | Op::Ge(a, b)
+        | Op::Ltu(a, b)
+        | Op::Geu(a, b)
+        | Op::Store(a, b)
+        | Op::VolatileStore(a, b) => vec![a.0, b.0],
+        Op::Neg(a)
+        | Op::Not(a)
+        | Op::Load(a, _)
+        | Op::VolatileLoad(a, _)
+        | Op::Zext(a, _)
+        | Op::Sext(a, _)
+        | Op::Trunc(a, _)
+        | Op::MakeError(a) => vec![a.0],
+        Op::Call(_, args) => args.iter().map(|a| a.0).collect(),
+        _ => vec![],
+    }
+}
+
+fn term_uses(term: &Terminator) -> Vec<u32> {
+    match term {
+        Terminator::Return(Some(v)) => vec![v.0],
+        Terminator::ReturnError(a, b) => vec![a.0, b.0],
+        Terminator::BranchIf { cond, .. } => vec![cond.0],
+        Terminator::Jump(_, args) => args.iter().map(|a| a.0).collect(),
+        Terminator::TailCall(_, args) => args.iter().map(|a| a.0).collect(),
+        _ => vec![],
+    }
+}
+
 impl RegAlloc {
-    fn new() -> Self {
+    fn new(last_use: HashMap<u32, usize>) -> Self {
+        // initialize free regs in reverse order (pop gives temporaries first)
+        let mut free = REGS.to_vec();
+        free.reverse();
         Self {
             map: HashMap::new(),
-            next: 0,
+            free_regs: free,
             used_s_regs: Vec::new(),
             spill_count: 0,
             spill_slots: HashMap::new(),
             pending_spills: Vec::new(),
             pending_loads: Vec::new(),
+            last_use,
+            current_inst: 0,
+        }
+    }
+
+    // free registers for values that are dead after the current instruction
+    fn expire_old(&mut self) {
+        let dead_vals: Vec<u32> = self
+            .map
+            .keys()
+            .filter(|val_id| self.last_use.get(val_id).copied().unwrap_or(0) < self.current_inst)
+            .copied()
+            .collect();
+        for val_id in dead_vals {
+            if let Some(reg) = self.map.remove(&val_id) {
+                if !self.free_regs.contains(&reg) {
+                    self.free_regs.push(reg);
+                }
+            }
         }
     }
 
     fn get(&mut self, val: Value) -> u32 {
         if let Some(&reg) = self.map.get(&val.0) {
-            // check if this value was spilled — need to reload it
             if let Some(&slot) = self.spill_slots.get(&val.0) {
                 self.pending_loads.push((reg, slot));
             }
             return reg;
         }
-        if self.next < REGS.len() {
-            let reg = REGS[self.next];
-            self.next += 1;
+
+        // expire dead values to free their registers
+        self.expire_old();
+
+        if let Some(reg) = self.free_regs.pop() {
             self.map.insert(val.0, reg);
             if S_REGS.contains(&reg) && !self.used_s_regs.contains(&reg) {
                 self.used_s_regs.push(reg);
             }
             reg
         } else {
-            // all registers exhausted — evict oldest mapped value to stack
-            // find the first mapped value that isn't a spill candidate already
+            // spill: evict value with the latest last-use (furthest in future)
             let evict_val = self
                 .map
                 .iter()
-                .find(|&(_, &r)| r != T0 && r != T1) // don't evict scratch regs
-                .map(|(&v, &r)| (v, r));
+                .filter(|(_, r)| **r != T0 && **r != T1)
+                .max_by_key(|(v, _)| self.last_use.get(v).copied().unwrap_or(0))
+                .map(|(v, r)| (*v, *r));
 
             if let Some((evict_id, evict_reg)) = evict_val {
-                // assign spill slot
                 let slot = self.spill_count;
                 self.spill_count += 1;
                 self.spill_slots.insert(evict_id, slot);
                 self.pending_spills.push((evict_id, evict_reg, slot));
-
-                // give evicted register to new value
                 self.map.remove(&evict_id);
                 self.map.insert(val.0, evict_reg);
                 evict_reg
             } else {
-                T0 // absolute fallback
+                T0
             }
         }
     }
 
     fn assign(&mut self, val: Value, reg: u32) {
         self.map.insert(val.0, reg);
+        // remove from free list
+        self.free_regs.retain(|&r| r != reg);
     }
 
-    // compute frame size: RA + used s-regs + spill slots, aligned to 16
+    fn advance_inst(&mut self) {
+        self.current_inst += 1;
+    }
+
     fn frame_size(&self) -> i32 {
-        let save_slots = 1 + self.used_s_regs.len() as i32; // RA + s-regs
+        let save_slots = 1 + self.used_s_regs.len() as i32;
         let total_slots = save_slots + self.spill_count;
         ((total_slots * 4) + 15) & !15
     }
 
-    // offset from SP for a spill slot (after save area)
     fn spill_offset(&self, slot: i32) -> i32 {
-        // spill slots start after the save area at the bottom of the frame
         slot * 4
     }
 }
@@ -146,7 +236,8 @@ impl CodeGen {
         // 2. emit real prologue + body + epilogue
 
         let mut body_emitter = Emitter::new();
-        let mut ra = RegAlloc::new();
+        let last_use = compute_last_use(func);
+        let mut ra = RegAlloc::new(last_use);
 
         // bind function params to a0..a7
         for (i, (_name, _ty)) in func.params.iter().enumerate() {
@@ -167,16 +258,16 @@ impl CodeGen {
 
             for inst in &block.insts {
                 let rd = ra.get(inst.result);
-                // emit any pending spill stores
                 self.flush_spills(&mut ra);
                 self.gen_inst(rd, &inst.op, &mut ra);
-                // emit any pending reload loads
                 self.flush_loads(&mut ra);
+                ra.advance_inst();
             }
 
             self.flush_spills(&mut ra);
             self.gen_terminator(&block.terminator, &func.name, &mut ra);
             self.flush_loads(&mut ra);
+            ra.advance_inst();
         }
 
         // swap back — body_emitter now has the body code
