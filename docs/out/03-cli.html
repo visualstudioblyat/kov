@@ -3,93 +3,136 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>CLI Reference — Kov</title>
-<link rel="stylesheet" href="style.css">
+<title>CLI Reference — Kov Documentation</title>
+<meta name="description" content="Documentation for the Kov programming language">
+<meta property="og:title" content="CLI Reference — Kov Documentation">
+<meta property="og:description" content="Documentation for the Kov programming language">
+<link rel="stylesheet" href="assets/style.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 </head>
 <body>
+<div class="top-bar">
+<a href="index.html" class="logo">Kov Documentation</a>
+<div class="top-actions">
+<button class="search-btn" onclick="toggleSearch()">Search <kbd>Ctrl+K</kbd></button>
+<a href="https://github.com/visualstudioblyat/kov" class="gh-link">GitHub</a>
+</div>
+</div>
+<div class="search-overlay" id="search-overlay" style="display:none">
+<div class="search-modal">
+<input type="text" id="search-input" placeholder="Search docs..." oninput="doSearch(this.value)" autofocus>
+<div id="search-results"></div>
+</div>
+</div>
 <div class="layout">
-<aside><nav>
+<aside><nav class="sidebar-nav">
 <ul>
-<li><a href="index.html">Home</a></li>
 <li><a href="01-getting-started.html">Getting Started</a></li>
 <li><a href="02-language.html">Language Reference</a></li>
 <li class="active"><a href="03-cli.html">CLI Reference</a></li>
 </ul>
 </nav>
 </aside>
-<main><h1 id="cli-reference">CLI Reference</h1>
+<main>
+<div class="breadcrumb"><a href="index.html">Docs</a> / CLI Reference</div>
+<article><h1 id="cli-reference">CLI Reference</h1>
 <p>kov has 17 commands. here's what each does.</p>
 <h2 id="kov-build">kov build</h2>
 <p>compile to binary.</p>
-<pre><code class="lang-text">kov build blink.kov -o firmware.elf
+<div class="code-block"><div class="code-header"><span class="code-lang">text</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div><pre><code class="lang-text">kov build blink.kov -o firmware.elf
 kov build blink.kov -o firmware.bin
 kov build hello.kov -o hello --target x86-64
-</code></pre>
+</code></pre></div>
 <h2 id="kov-run">kov run</h2>
 <p>compile and execute in the built-in emulator.</p>
-<pre><code class="lang-text">kov run blink.kov
+<div class="code-block"><div class="code-header"><span class="code-lang">text</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div><pre><code class="lang-text">kov run blink.kov
 kov run blink.kov -c 50000
-</code></pre>
+</code></pre></div>
 <p><code>-c</code> sets max cycles. default is 10,000.</p>
 <h2 id="kov-asm">kov asm</h2>
 <p>show generated RISC-V assembly with labels.</p>
-<pre><code class="lang-text">kov asm blink.kov
-</code></pre>
+<div class="code-block"><div class="code-header"><span class="code-lang">text</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div><pre><code class="lang-text">kov asm blink.kov
+</code></pre></div>
 <h2 id="kov-trace">kov trace</h2>
 <p>output per-cycle JSON trace for the time-travel debugger.</p>
-<pre><code class="lang-text">kov trace blink.kov -c 500
-</code></pre>
+<div class="code-block"><div class="code-header"><span class="code-lang">text</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div><pre><code class="lang-text">kov trace blink.kov -c 500
+</code></pre></div>
 <h2 id="kov-wcet">kov wcet</h2>
 <p>worst-case execution time, stack depth, loop bounds, and energy analysis.</p>
-<pre><code class="lang-text">kov wcet blink.kov
-</code></pre>
+<div class="code-block"><div class="code-header"><span class="code-lang">text</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div><pre><code class="lang-text">kov wcet blink.kov
+</code></pre></div>
 <h2 id="kov-check">kov check</h2>
 <p>type check without compiling. supports JSON error output.</p>
-<pre><code class="lang-text">kov check blink.kov
+<div class="code-block"><div class="code-header"><span class="code-lang">text</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div><pre><code class="lang-text">kov check blink.kov
 kov check blink.kov --error-format=json
-</code></pre>
+</code></pre></div>
 <h2 id="kov-test">kov test</h2>
 <p>run functions marked with <code>#[test]</code>.</p>
-<pre><code class="lang-text">kov test tests.kov
-</code></pre>
+<div class="code-block"><div class="code-header"><span class="code-lang">text</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div><pre><code class="lang-text">kov test tests.kov
+</code></pre></div>
 <h2 id="kov-repl">kov repl</h2>
 <p>interactive compile and evaluate.</p>
-<pre><code class="lang-text">kov repl
+<div class="code-block"><div class="code-header"><span class="code-lang">text</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div><pre><code class="lang-text">kov repl
 kov&gt; 3 + 4
   = 7 (0x7)
-</code></pre>
+</code></pre></div>
 <h2 id="kov-flash">kov flash</h2>
 <p>compile and flash to hardware via probe-rs.</p>
-<pre><code class="lang-text">kov flash blink.kov --chip esp32c3
-</code></pre>
+<div class="code-block"><div class="code-header"><span class="code-lang">text</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div><pre><code class="lang-text">kov flash blink.kov --chip esp32c3
+</code></pre></div>
 <h2 id="kov-boards">kov boards</h2>
 <p>list supported board targets.</p>
 <h2 id="kov-init">kov init</h2>
 <p>create a new project with kov.toml and main.kov.</p>
-<pre><code class="lang-text">kov init myproject --board esp32c3
-</code></pre>
+<div class="code-block"><div class="code-header"><span class="code-lang">text</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div><pre><code class="lang-text">kov init myproject --board esp32c3
+</code></pre></div>
 <h2 id="kov-add">kov add</h2>
 <p>add a dependency to kov.toml.</p>
-<pre><code class="lang-text">kov add esp32c3-hal --git https://github.com/example/hal
-</code></pre>
+<div class="code-block"><div class="code-header"><span class="code-lang">text</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div><pre><code class="lang-text">kov add esp32c3-hal --git https://github.com/example/hal
+</code></pre></div>
 <h2 id="kov-svd">kov svd</h2>
 <p>generate board definitions from SVD files.</p>
-<pre><code class="lang-text">kov svd esp32c3.svd --name esp32c3
-</code></pre>
+<div class="code-block"><div class="code-header"><span class="code-lang">text</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div><pre><code class="lang-text">kov svd esp32c3.svd --name esp32c3
+</code></pre></div>
 <h2 id="kov-import-c">kov import-c</h2>
 <p>generate extern declarations from C headers.</p>
-<pre><code class="lang-text">kov import-c hal.h
-</code></pre>
+<div class="code-block"><div class="code-header"><span class="code-lang">text</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div><pre><code class="lang-text">kov import-c hal.h
+</code></pre></div>
 <h2 id="kov-wcet-elf">kov wcet-elf</h2>
 <p>analyze any RISC-V ELF binary for WCET and stack depth.</p>
-<pre><code class="lang-text">kov wcet-elf firmware.elf
-</code></pre>
+<div class="code-block"><div class="code-header"><span class="code-lang">text</span><button class="copy-btn" onclick="copyCode(this)">Copy</button></div><pre><code class="lang-text">kov wcet-elf firmware.elf
+</code></pre></div>
 <h2 id="kov-lsp">kov lsp</h2>
 <p>start the language server for editor integration.</p>
 <h2 id="kov-lex">kov lex</h2>
 <p>dump tokens for debugging.</p>
+</article>
+<div class="prev-next"><a href="02-language.html" class="prev">← Language Reference</a></div>
 </main>
+<div class="toc-col"><div class="toc"><div class="toc-title">On this page</div>
+<ul>
+<li><a href="#kov-build">kov build</a></li>
+<li><a href="#kov-run">kov run</a></li>
+<li><a href="#kov-asm">kov asm</a></li>
+<li><a href="#kov-trace">kov trace</a></li>
+<li><a href="#kov-wcet">kov wcet</a></li>
+<li><a href="#kov-check">kov check</a></li>
+<li><a href="#kov-test">kov test</a></li>
+<li><a href="#kov-repl">kov repl</a></li>
+<li><a href="#kov-flash">kov flash</a></li>
+<li><a href="#kov-boards">kov boards</a></li>
+<li><a href="#kov-init">kov init</a></li>
+<li><a href="#kov-add">kov add</a></li>
+<li><a href="#kov-svd">kov svd</a></li>
+<li><a href="#kov-import-c">kov import-c</a></li>
+<li><a href="#kov-wcet-elf">kov wcet-elf</a></li>
+<li><a href="#kov-lsp">kov lsp</a></li>
+<li><a href="#kov-lex">kov lex</a></li>
+</ul></div>
 </div>
-<footer><p>generated by kovdocs — built with the kov compiler</p></footer>
+</div>
+<footer><p>generated by <a href="https://github.com/visualstudioblyat/kov">kovdocs</a></p></footer>
+<script src="assets/app.js"></script>
 </body>
 </html>
