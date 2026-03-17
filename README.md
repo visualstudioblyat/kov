@@ -2,56 +2,50 @@
 
 ![CI](https://github.com/visualstudioblyat/kov/actions/workflows/ci.yml/badge.svg)
 
-A systems language and compiler for RISC-V bare metal. No LLVM, no runtime, no external toolchain. Source code goes in, firmware binary comes out.
+a risc-v compiler. no llvm, no gcc, no runtime. source goes in, firmware comes out.
 
-## why
+**[try it in your browser](https://kov.dev/playground)** -- no install needed.
 
-Rust's embedded ecosystem gets peripheral ownership right, but it's a library pattern on top of a general-purpose language with a 2GB LLVM toolchain. RTIC and Embassy are good frameworks, but they're macros, not language features. WCET analysis exists as separate tools (aiT, WCC) that run after compilation, not during it. Zig has a self-hosted backend but no hardware awareness. Every embedded developer I've talked to spends more time fighting toolchains than writing application logic.
+## what is this
 
-I want all of these things in one language, designed together from the start: peripheral ownership as a language primitive, cycle counting and stack proofs integrated into the compiler, interrupts as syntax not macros, board definitions as source code not linker scripts, and a compiler small enough to embed in a browser or hand to an AI agent.
+i wanted a language where the compiler knows about hardware. where claiming a gpio pin twice is a compile error. where the compiler can tell you your interrupt handler takes 47 cycles before you flash it. where the whole toolchain fits in 400KB of wasm and runs in a browser tab.
 
-No single tool does all of this, so I'm building one that does. Mostly for myself, because I want it to exist. If other people find it useful, that's a bonus.
+nothing did all of that, so i built it.
 
-## what it does (eventually)
-
-- Compiles a Rust-like language directly to RISC-V machine code
-- Peripheral ownership as a language primitive, not a library pattern
-- Cycle counting integrated into the compiler, not a separate analysis tool
-- Stack depth proofs across the whole call graph, not per-function
-- Interrupt handlers as language syntax with priority ceiling enforcement
-- Board definitions as part of the grammar, not external config files
-- No LLVM, no GCC, no external assembler, no external linker
-- Sub-5ms compile times
-- Agent-native: library API, JSON errors, deterministic output
-
-## where it is now
-
-The compiler works end-to-end. It compiles Kov source to RISC-V machine code and runs it in a built-in emulator that verifies GPIO register writes.
+## what it actually does
 
 ```
 $ kov run examples/blink.kov
-  compiled: 416 bytes in 0.3ms
-  executed: 2000 cycles in 0.2ms
-  io:       215 writes
-            [0x60004004] ← 0x4    ← GPIO pin 2 HIGH
-            [0x60004008] ← 0x4    ← GPIO pin 2 LOW
+  compiled: 492 bytes (400 compressed) in 0.6ms
+  executed: 10000 cycles in 1.0ms
+  io:       1214 writes
+            [0x60004004] <- 0x4    GPIO pin 2 HIGH
+            [0x60004008] <- 0x4    GPIO pin 2 LOW
             ...repeating
 ```
 
-80 tests, 4 example programs, ~4,500 lines of Rust.
-
-## try it
+```
+$ kov wcet examples/blink.kov
+  wcet analysis (2 functions):
+  main(): 23 cycles
+  on_tick(): 3 cycles
+  stack analysis:
+  main(): 16 bytes (frame: 16)
+  on_tick(): 16 bytes (frame: 16)
+  energy estimate:
+  main(): 0.003 uJ (3400 pJ)
+  on_tick(): 0.000 uJ (300 pJ)
+```
 
 ```
-cargo build
-cargo run -- run examples/blink.kov
-cargo run -- run examples/counter.kov
-cargo run -- run examples/pattern.kov
-cargo run -- build examples/blink.kov -o firmware.elf
-cargo test
+$ kov repl
+kov> 3 + 4
+  = 7 (0x7)
+kov> 100 / 3
+  = 33 (0x21)
 ```
 
-## example
+## the language
 
 ```
 board esp32c3 {
@@ -79,6 +73,40 @@ interrupt(timer0, priority = 2) fn on_tick() {
     counter += 1;
 }
 ```
+
+peripheral ownership is a language feature. claim `gpio.pin(2)` twice and the compiler rejects it. the board definition is syntax, not a linker script. `#[stack(512)]` is a compile error if the call graph exceeds 512 bytes.
+
+## features that exist right now
+
+**language:** structs, enums with data, generics, traits, impl blocks, match with exhaustiveness, error unions + try, labeled loops, inline assembly, cast expressions, short-circuit && ||
+
+**compiler:** 8 optimizer passes (constant folding, dce, cse, copy propagation, strength reduction, function inlining, tail call, rv32c compression), linear scan register allocator with liveness analysis, reproducible builds
+
+**safety:** `#[stack(N)]` and `#[max_cycles(N)]` enforced as compile errors, peripheral double-claim detection, interrupt safety (shared global detection), dma buffer typestate, no implicit integer promotion, match exhaustiveness
+
+**analysis:** wcet per function, stack depth across call graph, automatic loop bound derivation, energy estimation in microjoules
+
+**tooling:** 17 cli commands, built-in rv32im emulator, time-travel debugger (per-cycle trace), risc-v disassembler, lsp server, vs code extension, wasm playground (400KB), repl, c header import, svd parser, package manager
+
+**targets:** esp32c3, ch32v003, gd32vf103, fe310, stm32f4, nrf52840, rp2040
+
+## try it
+
+```
+cargo build
+cargo run -- run examples/blink.kov
+cargo run -- asm examples/blink.kov
+cargo run -- wcet examples/blink.kov
+cargo run -- repl
+cargo run -- check examples/blink.kov
+cargo test
+```
+
+or just go to [kov.dev/playground](https://kov.dev/playground).
+
+## numbers
+
+210 tests. 15,500 lines of rust. 400KB wasm. 0.6ms compile time. 492 bytes for blink. 7 board targets. 17 cli commands.
 
 ## license
 
