@@ -936,6 +936,17 @@ impl<'a> FnBuilder<'a> {
             // method calls and function calls → Call op
             Expr::Call(callee, args, _) => {
                 if let Expr::Ident(name, _) = callee.as_ref() {
+                    // builtins: write_mmio(addr, val) and read_mmio(addr)
+                    if name == "write_mmio" && args.len() == 2 {
+                        let addr = self.lower_expr(&args[0]);
+                        let val = self.lower_expr(&args[1]);
+                        self.emit(Op::VolatileStore(addr, val), IrType::Void);
+                        return self.emit(Op::Nop, IrType::Void);
+                    }
+                    if name == "read_mmio" && args.len() == 1 {
+                        let addr = self.lower_expr(&args[0]);
+                        return self.emit(Op::VolatileLoad(addr, IrType::I32), IrType::I32);
+                    }
                     // check if this is an enum variant constructor
                     if let Some((_enum_name, tag, _field_tys)) = self.enum_variants.get(name) {
                         // allocate stack: tag (4 bytes) + fields (4 bytes each)

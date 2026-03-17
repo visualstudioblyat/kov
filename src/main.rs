@@ -425,6 +425,19 @@ fn compile(source: &str) -> CompileResult {
         for (_, fn_name) in &interrupts {
             codegen::startup::emit_interrupt_wrapper(&mut cg.emitter, fn_name);
         }
+    } else {
+        // hosted mode: minimal startup that calls main and halts
+        use codegen::encode::*;
+        cg.emitter.label("_start");
+        let sp_val = 0x2000_8000i32;
+        let (i1, i2) = li32(SP, sp_val);
+        cg.emitter.emit32(i1);
+        if let Some(i) = i2 {
+            cg.emitter.emit32(i);
+        }
+        cg.emitter.emit_jump(jal(RA, 0), "main");
+        cg.emitter.label("_halt");
+        cg.emitter.emit32(ebreak());
     }
 
     for func in &ir_result.functions {

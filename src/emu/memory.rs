@@ -16,6 +16,7 @@ pub struct Memory {
     pub ram_base: u32,
     pub mmio_log: Vec<MmioAccess>,
     mmio_shadow: HashMap<u32, u32>,
+    pub vfs: super::vfs::VirtualFS,
 }
 
 #[derive(Debug, Clone)]
@@ -45,6 +46,7 @@ impl Memory {
             ram_base,
             mmio_log: Vec::new(),
             mmio_shadow: HashMap::new(),
+            vfs: super::vfs::VirtualFS::new(),
         }
     }
 
@@ -86,6 +88,8 @@ impl Memory {
                 self.ram[off + 2],
                 self.ram[off + 3],
             ])
+        } else if super::vfs::VirtualFS::is_vfs_addr(addr) {
+            self.vfs.handle_read(addr)
         } else if self.is_mmio(addr) {
             self.mmio_log.push(MmioAccess {
                 address: addr,
@@ -121,6 +125,9 @@ impl Memory {
     pub fn write32(&mut self, addr: u32, val: u32) {
         if let Some(off) = self.ram_offset(addr) {
             self.ram[off..off + 4].copy_from_slice(&val.to_le_bytes());
+        } else if super::vfs::VirtualFS::is_vfs_addr(addr) {
+            let ram_snapshot: Vec<u8> = self.ram.clone();
+            self.vfs.handle_write(addr, val, &ram_snapshot);
         } else if self.is_mmio(addr) {
             self.mmio_log.push(MmioAccess {
                 address: addr,

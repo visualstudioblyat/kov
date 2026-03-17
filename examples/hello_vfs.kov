@@ -1,0 +1,15 @@
+// hello world via VFS stdout
+// write_mmio is a compiler builtin for volatile stores
+
+fn putchar(c: u32) {
+    write_mmio(4026531860, c);
+}
+
+fn main() {
+    putchar(104);
+    putchar(101);
+    putchar(108);
+    putchar(108);
+    putchar(111);
+    putchar(10);
+}
