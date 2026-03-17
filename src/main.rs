@@ -701,6 +701,28 @@ fn cmd_wcet(args: &[String]) {
 
     eprintln!("  stack analysis:");
     eprint!("{}", codegen::stack::format_report(&stack_results));
+
+    // loop bound analysis
+    eprintln!("  loop bounds:");
+    for func in &ir.functions {
+        let bounds = codegen::loopbound::analyze_loop_bounds(func);
+        if !bounds.is_empty() {
+            eprint!(
+                "    {}(): {}",
+                func.name,
+                codegen::loopbound::format_bounds(&bounds)
+            );
+        }
+    }
+
+    // energy analysis
+    let energy_results: Vec<_> = ir
+        .functions
+        .iter()
+        .map(codegen::energy::analyze_energy)
+        .collect();
+    eprintln!("  energy estimate:");
+    eprint!("{}", codegen::energy::format_energy(&energy_results));
     let _ = result;
 }
 

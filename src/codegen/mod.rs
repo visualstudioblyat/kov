@@ -10,6 +10,8 @@ pub mod disasm;
 pub mod elf;
 pub mod emit;
 pub mod encode;
+pub mod energy;
+pub mod loopbound;
 pub mod mmio;
 pub mod stack;
 pub mod startup;

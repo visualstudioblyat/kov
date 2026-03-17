@@ -262,7 +262,7 @@ fn hover_info(word: &str, source: &str) -> String {
             }
         }
     }
-    format!("{}", word)
+    word.to_string()
 }
 
 const KEYWORDS: &[&str] = &[

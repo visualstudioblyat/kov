@@ -14,6 +14,12 @@ pub struct DefmtTable {
     string_map: HashMap<String, u8>,
 }
 
+impl Default for DefmtTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DefmtTable {
     pub fn new() -> Self {
         Self {
