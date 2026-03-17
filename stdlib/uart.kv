@@ -1,0 +1,9 @@
+// core::uart — standard UART traits
+
+trait UartRead {
+    fn read_byte() !u8;
+}
+
+trait UartWrite {
+    fn write_byte(b: u8);
+}

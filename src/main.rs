@@ -13,6 +13,7 @@ mod errors;
 mod ir;
 mod lexer;
 mod parser;
+mod pkg;
 mod testing;
 mod types;
 
@@ -32,6 +33,8 @@ fn main() {
         eprintln!("  wcet <file.kv>                worst-case execution time analysis");
         eprintln!("  flash <file.kv> [--chip X]    compile and flash to hardware");
         eprintln!("  test <file.kv>                run #[test] functions");
+        eprintln!("  init <name> [--board X]       create new project");
+        eprintln!("  add <package> [--git URL]     add a dependency");
         eprintln!("  boards                        list supported boards");
         eprintln!("  svd <file.svd> [--name X]     generate board def from SVD");
         eprintln!("  check <file.kv>               type check only");
@@ -49,6 +52,43 @@ fn main() {
         "run" => cmd_run(&args),
         "trace" => cmd_trace(&args),
         "wcet" => cmd_wcet(&args),
+        "init" => {
+            if args.len() < 3 {
+                eprintln!("usage: kov init <name> [--board <board>]");
+                process::exit(1);
+            }
+            let name = &args[2];
+            let board = find_flag(&args, "--board").unwrap_or_else(|| "esp32c3".into());
+            match pkg::init_project(name, &board) {
+                Ok(()) => eprintln!("  created project: {}/", name),
+                Err(e) => die(&e),
+            }
+        }
+        "add" => {
+            if args.len() < 3 {
+                eprintln!("usage: kov add <package> [--git <url>]");
+                process::exit(1);
+            }
+            let dep_name = &args[2];
+            let git_url = find_flag(&args, "--git");
+
+            let toml_path = "kov.toml";
+            let content = std::fs::read_to_string(toml_path)
+                .unwrap_or_else(|_| die("no kov.toml found in current directory"));
+            let mut pkg = pkg::Package::from_toml(&content);
+            pkg.deps.insert(
+                dep_name.clone(),
+                pkg::DepSpec {
+                    git: git_url,
+                    version: None,
+                    path: None,
+                },
+            );
+            if let Err(e) = std::fs::write(toml_path, pkg.to_toml()) {
+                die(&format!("cannot write kov.toml: {e}"));
+            }
+            eprintln!("  added dependency: {}", dep_name);
+        }
         "test" => {
             if args.len() < 3 {
                 eprintln!("usage: kov test <file.kv>");

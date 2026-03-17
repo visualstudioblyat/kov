@@ -1,0 +1,13 @@
+// core::gpio — standard GPIO traits
+// every board HAL implements these
+
+trait InputPin {
+    fn is_high() bool;
+    fn is_low() bool;
+}
+
+trait OutputPin {
+    fn set_high();
+    fn set_low();
+    fn toggle();
+}
