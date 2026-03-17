@@ -816,8 +816,19 @@ impl<'a> FnBuilder<'a> {
                 if let Some(mmio_result) = self.try_lower_mmio(obj, method, args) {
                     return mmio_result;
                 }
-                let _obj_val = self.lower_expr(obj);
+                let obj_val = self.lower_expr(obj);
                 let arg_vals: Vec<Value> = args.iter().map(|a| self.lower_expr(a)).collect();
+
+                // try to resolve struct method: obj.method() → StructName_method(obj, args)
+                if let Expr::Ident(var_name, _) = obj.as_ref() {
+                    if let Some(struct_name) = self.var_types.get(var_name) {
+                        let mangled = format!("{}_{}", struct_name, method);
+                        let mut all_args = vec![obj_val];
+                        all_args.extend(arg_vals);
+                        return self.emit(Op::Call(mangled, all_args), IrType::I32);
+                    }
+                }
+
                 self.emit(Op::Call(method.clone(), arg_vals), IrType::Void)
             }
 
@@ -1274,5 +1285,25 @@ mod tests {
             "labeled break needs outer+inner loops + exit"
         );
         println!("{}", func);
+    }
+
+    #[test]
+    fn lower_impl_method_call() {
+        let ir = lower(
+            "struct Counter { val: u32 }
+             impl Counter { fn inc(c: u32) u32 { return c + 1; } }
+             fn f() u32 { let c = Counter { val: 0 }; return c.inc(); }",
+        );
+        // should have Counter_inc function
+        let has_mangled = ir.functions.iter().any(|f| f.name == "Counter_inc");
+        assert!(has_mangled, "impl method should be lowered as Counter_inc");
+        // f() should call Counter_inc
+        let f = ir.functions.iter().find(|f| f.name == "f").unwrap();
+        let has_call = f.blocks.iter().any(|b| {
+            b.insts
+                .iter()
+                .any(|i| matches!(&i.op, Op::Call(n, _) if n == "Counter_inc"))
+        });
+        assert!(has_call, "c.inc() should resolve to Counter_inc");
     }
 }
