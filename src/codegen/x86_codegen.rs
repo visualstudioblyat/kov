@@ -65,6 +65,12 @@ pub struct X86CodeGen {
     pub externs: Vec<String>,
 }
 
+impl Default for X86CodeGen {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl X86CodeGen {
     pub fn new() -> Self {
         Self {

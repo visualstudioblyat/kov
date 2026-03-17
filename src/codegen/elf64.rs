@@ -38,9 +38,15 @@ const SHF_ALLOC: u64 = 2;
 const SHF_EXECINSTR: u64 = 4;
 const SHF_WRITE: u64 = 1;
 
+impl Default for Elf64Writer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Elf64Writer {
     pub fn new() -> Self {
-        let mut strtab = vec![0u8]; // first byte is null
+        let strtab = vec![0u8]; // first byte is null
         Self {
             code: Vec::new(),
             data: Vec::new(),

@@ -517,11 +517,17 @@ fn cmd_lex(args: &[String]) {
 
 fn cmd_build(args: &[String]) {
     if args.len() < 3 {
-        eprintln!("usage: kov build <file.kov> [-o output]");
+        eprintln!("usage: kov build <file.kov> [-o output] [--target x86-64]");
         process::exit(1);
     }
 
     let input = &args[2];
+    let target = find_flag(args, "--target");
+
+    if target.as_deref() == Some("x86-64") || target.as_deref() == Some("x86_64") {
+        return cmd_build_x86(args);
+    }
+
     let output = find_flag(args, "-o").unwrap_or_else(|| input.replace(".kov", ".bin"));
     let source = read_file(input);
     let result = compile(&source);
@@ -548,6 +554,95 @@ fn cmd_build(args: &[String]) {
         result.code.len()
     );
     eprintln!("  time:     {:.1}ms", result.elapsed.as_secs_f64() * 1000.0);
+}
+
+fn cmd_build_x86(args: &[String]) {
+    let input = &args[2];
+    let output = find_flag(args, "-o").unwrap_or_else(|| input.replace(".kov", ""));
+    let source = read_file(input);
+    let start = Instant::now();
+
+    let tokens = match lexer::Lexer::tokenize(&source) {
+        Ok(t) => t,
+        Err(e) => die(&format!("lex error: {e}")),
+    };
+    let mut program = match parser::Parser::new(tokens).parse() {
+        Ok(p) => p,
+        Err(errors) => {
+            for e in &errors {
+                eprint!("{}", errors::format_error(&source, e.span, &e.message));
+            }
+            die(&format!("{} parse error(s)", errors.len()));
+        }
+    };
+    parser::monomorph::monomorphize(&mut program);
+
+    if let Err(errs) = types::check::TypeChecker::new().check(&program) {
+        for e in &errs {
+            eprint!("{}", errors::format_error(&source, e.span, &e.message));
+        }
+        die(&format!("{} type error(s)", errs.len()));
+    }
+
+    let mut ir_result = ir::lower::Lowering::lower(&program);
+    ir::opt::inline_functions(&mut ir_result.functions);
+    for func in &mut ir_result.functions {
+        ir::opt::optimize(func);
+    }
+
+    let mut cg = codegen::x86_codegen::X86CodeGen::new();
+    for func in &ir_result.functions {
+        cg.gen_function(func);
+    }
+
+    let obj = match cg.finish() {
+        Ok(o) => o,
+        Err(e) => die(&format!("x86 codegen error: {e}")),
+    };
+
+    let obj_path = format!("{}.o", output);
+    if let Err(e) = std::fs::write(&obj_path, &obj) {
+        die(&format!("cannot write {obj_path}: {e}"));
+    }
+
+    let elapsed = start.elapsed();
+    eprintln!(
+        "  compiled: {} → {} ({} bytes .o) in {:.1}ms",
+        input,
+        obj_path,
+        obj.len(),
+        elapsed.as_secs_f64() * 1000.0
+    );
+
+    // link with cc
+    eprintln!("  linking: {} → {}", obj_path, output);
+    let status = std::process::Command::new("cc")
+        .args([&obj_path, "-o", &output, "-no-pie"])
+        .status();
+
+    match status {
+        Ok(s) if s.success() => {
+            eprintln!("  linked: {}", output);
+            let _ = std::fs::remove_file(&obj_path);
+        }
+        Ok(s) => {
+            eprintln!(
+                "  link failed (exit {}). .o file kept at {}",
+                s.code().unwrap_or(-1),
+                obj_path
+            );
+        }
+        Err(e) => {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                eprintln!(
+                    "  cc not found. .o file at {}. link manually: cc {} -o {}",
+                    obj_path, obj_path, output
+                );
+            } else {
+                eprintln!("  link error: {}. .o file at {}", e, obj_path);
+            }
+        }
+    }
 }
 
 fn cmd_run(args: &[String]) {

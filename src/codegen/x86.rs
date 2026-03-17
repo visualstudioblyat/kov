@@ -63,6 +63,12 @@ pub enum X86FixupKind {
     Rel32, // 32-bit relative (CALL, JMP, JCC)
 }
 
+impl Default for X86Emitter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl X86Emitter {
     pub fn new() -> Self {
         Self {
@@ -151,7 +157,7 @@ impl X86Emitter {
             if offset == 0 {
                 self.emit1(modrm(0b00, rl, 0b100));
                 self.emit1(0x24); // SIB: base=RSP, index=none, scale=1
-            } else if offset >= -128 && offset <= 127 {
+            } else if (-128..=127).contains(&offset) {
                 self.emit1(modrm(0b01, rl, 0b100));
                 self.emit1(0x24);
                 self.emit1(offset as u8);
@@ -167,7 +173,7 @@ impl X86Emitter {
             self.emit1(0);
         } else if offset == 0 {
             self.emit1(modrm(0b00, rl, bl));
-        } else if offset >= -128 && offset <= 127 {
+        } else if (-128..=127).contains(&offset) {
             self.emit1(modrm(0b01, rl, bl));
             self.emit1(offset as u8);
         } else {
@@ -207,14 +213,14 @@ impl X86Emitter {
     // xor eax,eax — zero idiom, 2 bytes, breaks dependency chain
     pub fn zero_reg(&mut self, reg: u8) {
         if needs_rex(reg) {
-            self.emit1(0x41 | (rex_b(reg) << 0));
+            self.emit1(0x41 | rex_b(reg));
         }
         self.emit1(0x31);
         self.emit1(modrm(0b11, reg_lo(reg), reg_lo(reg)));
     }
 
     pub fn add_ri32(&mut self, dst: u8, imm: i32) {
-        if imm >= -128 && imm <= 127 {
+        if (-128..=127).contains(&imm) {
             // ADD r/m64, imm8 (sign-extended)
             self.emit1(rex_w(0, 0, rex_b(dst)));
             self.emit1(0x83);
@@ -229,7 +235,7 @@ impl X86Emitter {
     }
 
     pub fn sub_ri32(&mut self, dst: u8, imm: i32) {
-        if imm >= -128 && imm <= 127 {
+        if (-128..=127).contains(&imm) {
             self.emit1(rex_w(0, 0, rex_b(dst)));
             self.emit1(0x83);
             self.emit1(modrm(0b11, 5, dst));
@@ -266,7 +272,7 @@ impl X86Emitter {
     }
 
     pub fn cmp_ri32(&mut self, reg: u8, imm: i32) {
-        if imm >= -128 && imm <= 127 {
+        if (-128..=127).contains(&imm) {
             self.emit1(rex_w(0, 0, rex_b(reg)));
             self.emit1(0x83);
             self.emit1(modrm(0b11, 7, reg));
