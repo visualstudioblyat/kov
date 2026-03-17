@@ -323,6 +323,15 @@ impl TypeChecker {
                             }
                         }
                     }
+                    // add variant bindings to scope before checking arm body
+                    if let Pattern::Variant(_, bindings) = &arm.pattern {
+                        for binding in bindings {
+                            scope.vars.insert(binding.clone(), Ty::U32); // assume u32 fields for now
+                        }
+                    }
+                    if let Pattern::Ident(name) = &arm.pattern {
+                        scope.vars.insert(name.clone(), scrutinee_ty.clone());
+                    }
                     self.check_expr(&arm.body, scope);
                 }
                 // exhaustiveness: check all enum variants covered or has wildcard

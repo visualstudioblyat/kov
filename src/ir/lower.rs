@@ -840,6 +840,56 @@ impl<'a> FnBuilder<'a> {
                 }
             }
 
+            Expr::Binary(lhs, op, rhs, _) if matches!(op, BinOp::And) => {
+                // short-circuit &&: if left is false, result is false
+                let l = self.lower_expr(lhs);
+                let rhs_bb = self.func.new_block();
+                let merge_bb = self.func.new_block();
+                let result_param = self.func.add_block_param(merge_bb, IrType::Bool);
+                let false_val = self.emit(Op::ConstBool(false), IrType::Bool);
+                self.func.set_terminator(
+                    self.current_block,
+                    Terminator::BranchIf {
+                        cond: l,
+                        then_block: rhs_bb,
+                        then_args: vec![],
+                        else_block: merge_bb,
+                        else_args: vec![false_val],
+                    },
+                );
+                self.current_block = rhs_bb;
+                let r = self.lower_expr(rhs);
+                self.func
+                    .set_terminator(self.current_block, Terminator::Jump(merge_bb, vec![r]));
+                self.current_block = merge_bb;
+                result_param
+            }
+
+            Expr::Binary(lhs, op, rhs, _) if matches!(op, BinOp::Or) => {
+                // short-circuit ||: if left is true, result is true
+                let l = self.lower_expr(lhs);
+                let rhs_bb = self.func.new_block();
+                let merge_bb = self.func.new_block();
+                let result_param = self.func.add_block_param(merge_bb, IrType::Bool);
+                let true_val = self.emit(Op::ConstBool(true), IrType::Bool);
+                self.func.set_terminator(
+                    self.current_block,
+                    Terminator::BranchIf {
+                        cond: l,
+                        then_block: merge_bb,
+                        then_args: vec![true_val],
+                        else_block: rhs_bb,
+                        else_args: vec![],
+                    },
+                );
+                self.current_block = rhs_bb;
+                let r = self.lower_expr(rhs);
+                self.func
+                    .set_terminator(self.current_block, Terminator::Jump(merge_bb, vec![r]));
+                self.current_block = merge_bb;
+                result_param
+            }
+
             Expr::Binary(lhs, op, rhs, _) => {
                 let l = self.lower_expr(lhs);
                 let r = self.lower_expr(rhs);
@@ -860,8 +910,8 @@ impl<'a> FnBuilder<'a> {
                     BinOp::Gt => Op::Lt(r, l), // flip
                     BinOp::Le => Op::Ge(r, l), // flip
                     BinOp::Ge => Op::Ge(l, r),
-                    BinOp::And => Op::And(l, r), // TODO: short-circuit
-                    BinOp::Or => Op::Or(l, r),
+                    BinOp::And => Op::And(l, r), // bitwise (logical && handled above)
+                    BinOp::Or => Op::Or(l, r),   // bitwise (logical || handled above)
                     _ => Op::Nop,
                 };
                 let ty = match op {
