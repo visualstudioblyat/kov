@@ -1,1 +1,1 @@
-C:\Users\akrec\Desktop\kov-lang\tools\kovdocs\target\release\kovdocs.exe: C:\Users\akrec\Desktop\kov-lang\tools\kovdocs\src\main.rs
+C:\Users\akrec\Desktop\kov-lang\tools\kovdocs\target\release\kovdocs.exe: C:\Users\akrec\Desktop\kov-lang\tools\kovdocs\src\app.js C:\Users\akrec\Desktop\kov-lang\tools\kovdocs\src\config.rs C:\Users\akrec\Desktop\kov-lang\tools\kovdocs\src\highlight.rs C:\Users\akrec\Desktop\kov-lang\tools\kovdocs\src\main.rs C:\Users\akrec\Desktop\kov-lang\tools\kovdocs\src\markdown.rs C:\Users\akrec\Desktop\kov-lang\tools\kovdocs\src\style.css
