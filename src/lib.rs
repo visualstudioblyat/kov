@@ -6,6 +6,7 @@
     clippy::ptr_arg
 )]
 
+pub mod build;
 pub mod codegen;
 pub mod emu;
 pub mod errors;
