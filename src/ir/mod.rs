@@ -1,3 +1,4 @@
+pub mod async_lower;
 pub mod consteval;
 pub mod globals;
 pub mod lower;
