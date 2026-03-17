@@ -80,7 +80,7 @@ impl X86Emitter {
         self.code.len()
     }
 
-    fn emit(&mut self, bytes: &[u8]) {
+    pub fn emit(&mut self, bytes: &[u8]) {
         self.code.extend_from_slice(bytes);
     }
 
