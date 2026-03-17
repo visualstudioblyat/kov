@@ -39,6 +39,7 @@ fn main() {
         eprintln!("  boards                        list supported boards");
         eprintln!("  svd <file.svd> [--name X]     generate board def from SVD");
         eprintln!("  check <file.kov>               type check only");
+        eprintln!("  repl                          interactive compile + run");
         eprintln!("  lsp                           start language server");
         eprintln!("  lex <file.kov>                 dump tokens");
         eprintln!();
@@ -240,6 +241,15 @@ fn main() {
                 funcs.len()
             );
         }
+        "import-c" => {
+            if args.len() < 3 {
+                eprintln!("usage: kov import-c <header.h>");
+                process::exit(1);
+            }
+            let content = read_file(&args[2]);
+            let decls = codegen::cheader::parse_header(&content);
+            println!("{}", codegen::cheader::generate_kov(&decls));
+        }
         "svd" => {
             if args.len() < 3 {
                 eprintln!("usage: kov svd <file.svd> [--name <board>]");
@@ -250,6 +260,7 @@ fn main() {
             let peripherals = codegen::svd::parse_svd(&xml);
             println!("{}", codegen::svd::generate_kov(&peripherals, &name));
         }
+        "repl" => cmd_repl(),
         "lsp" => lsp::run_lsp(),
         "check" => cmd_check(&args),
         _ => {
@@ -756,6 +767,115 @@ fn cmd_flash(args: &[String]) {
 
     // cleanup
     let _ = std::fs::remove_file(&elf_path);
+}
+
+fn cmd_repl() {
+    use std::io::{self, BufRead, Write};
+
+    eprintln!("kov repl v0.1.0 — type expressions, see results");
+    eprintln!("  expressions are wrapped in fn main() {{ return <expr>; }}");
+    eprintln!("  type :q to quit, :asm to show assembly");
+    eprintln!();
+
+    let stdin = io::stdin();
+    let stdout = io::stdout();
+    let mut show_asm = false;
+
+    loop {
+        print!("kov> ");
+        let _ = stdout.lock().flush();
+
+        let mut line = String::new();
+        if stdin.lock().read_line(&mut line).is_err() || line.is_empty() {
+            break;
+        }
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line == ":q" || line == ":quit" {
+            break;
+        }
+        if line == ":asm" {
+            show_asm = !show_asm;
+            eprintln!("  asm mode: {}", if show_asm { "on" } else { "off" });
+            continue;
+        }
+
+        // wrap as a function that returns the expression
+        let source = if line.contains("fn ") || line.contains("let ") || line.contains("board ") {
+            line.to_string()
+        } else {
+            format!("fn __repl__() u32 {{ return {}; }}", line)
+        };
+
+        // compile
+        let tokens = match lexer::Lexer::tokenize(&source) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("  error: {e}");
+                continue;
+            }
+        };
+        let mut program = match parser::Parser::new(tokens).parse() {
+            Ok(p) => p,
+            Err(errors) => {
+                for e in &errors {
+                    eprintln!("  error: {}", e.message);
+                }
+                continue;
+            }
+        };
+        parser::monomorph::monomorphize(&mut program);
+
+        let mut ir_result = ir::lower::Lowering::lower(&program);
+        ir::opt::inline_functions(&mut ir_result.functions);
+        for func in &mut ir_result.functions {
+            ir::opt::optimize(func);
+        }
+
+        // try const eval first
+        if let Some(func) = ir_result.functions.iter().find(|f| f.name == "__repl__") {
+            if let Some(val) = ir::consteval::eval(func, &[]) {
+                eprintln!("  = {} (0x{:X})", val, val as u32);
+                if show_asm {
+                    let mut cg = codegen::CodeGen::new();
+                    cg.gen_function(func);
+                    if let Ok(code) = cg.finish() {
+                        let labels = cg.emitter.labels.clone();
+                        eprintln!("{}", codegen::disasm::disassemble(&code, 0, &labels));
+                    }
+                }
+                continue;
+            }
+        }
+
+        // fall back to emulator
+        let mut cg = codegen::CodeGen::new_with_globals(0x2000_0000, &ir_result.globals);
+        for func in &ir_result.functions {
+            cg.gen_function(func);
+        }
+        let labels = cg.emitter.labels.clone();
+        match cg.finish() {
+            Ok(code) => {
+                if show_asm {
+                    eprintln!(
+                        "{}",
+                        codegen::disasm::disassemble(&code, 0x0800_0000, &labels)
+                    );
+                }
+                let mut cpu = emu::Cpu::with_memory(0x0800_0000, 0x0800_0000, 0x2000_0000);
+                cpu.mem.load_flash(&code);
+                cpu.regs[2] = 0x2000_8000;
+                cpu.run(10_000);
+                eprintln!(
+                    "  = {} (0x{:X}) [{} cycles]",
+                    cpu.regs[10] as i32, cpu.regs[10], cpu.cycles
+                );
+            }
+            Err(e) => eprintln!("  codegen error: {e}"),
+        }
+    }
 }
 
 fn cmd_check(args: &[String]) {
