@@ -1,5 +1,4 @@
 use crate::parser::ast::*;
-use std::collections::HashMap;
 
 pub struct BuildConfig {
     pub board: Option<String>,

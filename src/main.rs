@@ -13,6 +13,7 @@ mod errors;
 mod ir;
 mod lexer;
 mod parser;
+mod testing;
 mod types;
 
 use std::process;
@@ -30,6 +31,7 @@ fn main() {
         eprintln!("  trace <file.kv> [-c cycles]   compile, execute, output JSON trace");
         eprintln!("  wcet <file.kv>                worst-case execution time analysis");
         eprintln!("  flash <file.kv> [--chip X]    compile and flash to hardware");
+        eprintln!("  test <file.kv>                run #[test] functions");
         eprintln!("  boards                        list supported boards");
         eprintln!("  svd <file.svd> [--name X]     generate board def from SVD");
         eprintln!("  check <file.kv>               type check only");
@@ -47,6 +49,18 @@ fn main() {
         "run" => cmd_run(&args),
         "trace" => cmd_trace(&args),
         "wcet" => cmd_wcet(&args),
+        "test" => {
+            if args.len() < 3 {
+                eprintln!("usage: kov test <file.kv>");
+                process::exit(1);
+            }
+            let source = read_file(&args[2]);
+            let results = testing::run_tests(&source);
+            eprint!("{}", testing::format_results(&results));
+            if results.iter().any(|r| !r.passed) {
+                process::exit(1);
+            }
+        }
         "flash" => cmd_flash(&args),
         "boards" => {
             eprintln!("supported boards:");
