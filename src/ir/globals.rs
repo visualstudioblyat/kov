@@ -117,9 +117,15 @@ impl GlobalTable {
                 offset += g.ty.size_bytes();
             }
         }
-        // check zero-initialized globals (in BSS, after data)
-        let bss_start = offset;
+        // BSS globals get offsets after all data+strings (they're zeroed separately)
+        let data_end = offset; // save .data end for strings
         let mut bss_offset = 0u32;
+        // first, calculate total string size to know where BSS starts
+        let mut total_string_size = 0u32;
+        for (_, bytes) in &self.strings {
+            total_string_size += ((bytes.len() as u32 + 1) + 3) & !3;
+        }
+        let bss_start = data_end + total_string_size;
         for g in &self.globals {
             if matches!(g.init, GlobalInit::Zero) {
                 if g.name == name {
@@ -128,9 +134,8 @@ impl GlobalTable {
                 bss_offset += g.ty.size_bytes();
             }
         }
-        let after_bss = bss_start + bss_offset;
-        // check strings
-        let mut str_offset = after_bss;
+        // strings come right after initialized globals in emit_data()
+        let mut str_offset = data_end;
         for (label, bytes) in &self.strings {
             if label == name {
                 return Some(str_offset);

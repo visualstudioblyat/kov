@@ -1,0 +1,17 @@
+// print a string by reading bytes from memory
+
+fn putchar(c: u32) {
+    write_mmio(4026531860, c);
+}
+
+fn print(ptr: u32, len: u32) {
+    for i in 0..len {
+        let byte = read_byte(ptr + i);
+        putchar(byte);
+    }
+}
+
+fn main() {
+    print("hello from kov!" as u32, 15);
+    putchar(10);
+}

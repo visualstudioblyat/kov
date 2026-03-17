@@ -245,6 +245,12 @@ fn collect_strings_expr(expr: &Expr, globals: &mut super::globals::GlobalTable) 
             collect_strings_expr(l, globals);
             collect_strings_expr(r, globals);
         }
+        Expr::Cast(inner, _, _) => {
+            collect_strings_expr(inner, globals);
+        }
+        Expr::Unary(_, inner, _) => {
+            collect_strings_expr(inner, globals);
+        }
         _ => {}
     }
 }
@@ -929,7 +935,8 @@ impl<'a> FnBuilder<'a> {
                     UnaryOp::Neg => self.emit(Op::Neg(v), IrType::I32),
                     UnaryOp::Not => self.emit(Op::Not(v), IrType::Bool),
                     UnaryOp::BitNot => self.emit(Op::Not(v), IrType::I32),
-                    _ => v, // &, &mut, * — handled in type checker
+                    UnaryOp::Deref => self.emit(Op::Load(v, IrType::I32), IrType::I32),
+                    _ => v, // &, &mut
                 }
             }
 
@@ -946,6 +953,16 @@ impl<'a> FnBuilder<'a> {
                     if name == "read_mmio" && args.len() == 1 {
                         let addr = self.lower_expr(&args[0]);
                         return self.emit(Op::VolatileLoad(addr, IrType::I32), IrType::I32);
+                    }
+                    if name == "read_byte" && args.len() == 1 {
+                        let addr = self.lower_expr(&args[0]);
+                        return self.emit(Op::Load(addr, IrType::I8), IrType::I32);
+                    }
+                    if name == "write_byte" && args.len() == 2 {
+                        let addr = self.lower_expr(&args[0]);
+                        let val = self.lower_expr(&args[1]);
+                        self.emit(Op::Store(addr, val), IrType::Void);
+                        return self.emit(Op::Nop, IrType::Void);
                     }
                     // check if this is an enum variant constructor
                     if let Some((_enum_name, tag, _field_tys)) = self.enum_variants.get(name) {
