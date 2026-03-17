@@ -407,7 +407,14 @@ impl TypeChecker {
                 } else if let Some(ty) = self.statics.get(name) {
                     ty.clone()
                 } else {
-                    self.err(*span, format!("undefined variable: {}", name));
+                    let suggestion =
+                        find_similar(name, scope.vars.keys().chain(self.statics.keys()));
+                    let msg = if let Some(s) = suggestion {
+                        format!("undefined variable: {}. did you mean '{}'?", name, s)
+                    } else {
+                        format!("undefined variable: {}", name)
+                    };
+                    self.err(*span, msg);
                     Ty::Unknown
                 }
             }
@@ -585,6 +592,45 @@ impl TypeChecker {
             _ => Ty::Unknown,
         }
     }
+}
+
+fn find_similar<'a, I>(name: &str, candidates: I) -> Option<String>
+where
+    I: Iterator<Item = &'a String>,
+{
+    let mut best = None;
+    let mut best_dist = 3usize; // max edit distance to suggest
+    for candidate in candidates {
+        let d = edit_distance(name, candidate);
+        if d < best_dist {
+            best_dist = d;
+            best = Some(candidate.clone());
+        }
+    }
+    best
+}
+
+fn edit_distance(a: &str, b: &str) -> usize {
+    let a: Vec<char> = a.chars().collect();
+    let b: Vec<char> = b.chars().collect();
+    let m = a.len();
+    let n = b.len();
+    let mut dp = vec![vec![0usize; n + 1]; m + 1];
+    for i in 0..=m {
+        dp[i][0] = i;
+    }
+    for j in 0..=n {
+        dp[0][j] = j;
+    }
+    for i in 1..=m {
+        for j in 1..=n {
+            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
+            dp[i][j] = (dp[i - 1][j] + 1)
+                .min(dp[i][j - 1] + 1)
+                .min(dp[i - 1][j - 1] + cost);
+        }
+    }
+    dp[m][n]
 }
 
 #[cfg(test)]
@@ -817,5 +863,17 @@ mod tests {
         );
         assert!(result.is_err());
         assert!(result.unwrap_err()[0].message.contains("missing variants"));
+    }
+
+    #[test]
+    fn did_you_mean_suggestion() {
+        let result = check("fn f() { let counter = 0; let x = conter + 1; }");
+        assert!(result.is_err());
+        assert!(result.unwrap_err()[0].message.contains("did you mean"));
+    }
+
+    #[test]
+    fn cast_expression() {
+        assert!(check("fn f(x: u32) { let y = x as u8; }").is_ok());
     }
 }

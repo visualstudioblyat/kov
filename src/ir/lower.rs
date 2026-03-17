@@ -964,8 +964,22 @@ impl<'a> FnBuilder<'a> {
                 payload
             }
 
+            Expr::Cast(inner, ty, _) => {
+                let val = self.lower_expr(inner);
+                let target = ast_type_to_ir(&Some(ty.clone()));
+                let source_size = 4u32; // assume i32 source for now
+                let target_size = target.size_bytes();
+                if target_size < source_size {
+                    self.emit(Op::Trunc(val, target), target)
+                } else if target_size > source_size {
+                    self.emit(Op::Zext(val, target), target)
+                } else {
+                    val // same size, no-op
+                }
+            }
+
             _ => {
-                // DotEnum, Cast, etc — TODO
+                // DotEnum, etc — TODO
                 self.emit(Op::Nop, IrType::Void)
             }
         }

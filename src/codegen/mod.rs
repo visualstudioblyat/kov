@@ -2,6 +2,7 @@ pub mod alloc;
 pub mod arm;
 pub mod builtins;
 pub mod compress;
+pub mod defmt;
 pub mod disasm;
 pub mod elf;
 pub mod emit;
