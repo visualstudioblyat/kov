@@ -1,0 +1,27 @@
+// core::fixedvec — fixed-capacity vector, no heap
+// usage: let v = FixedVec { data: [0; 256], len: 0, cap: 256 };
+
+struct FixedVec {
+    data: u32,   // pointer to backing array
+    len: u32,
+    cap: u32,
+}
+
+impl FixedVec {
+    fn push(self_ptr: u32, item: u32) {
+        // self.data[self.len] = item; self.len += 1;
+    }
+
+    fn get(self_ptr: u32, index: u32) u32 {
+        // return self.data[index];
+        return 0;
+    }
+
+    fn length(self_ptr: u32) u32 {
+        return 0;
+    }
+
+    fn is_empty(self_ptr: u32) u32 {
+        return 0;
+    }
+}

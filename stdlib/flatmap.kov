@@ -1,0 +1,28 @@
+// core::flatmap — sorted array lookup, O(n) insert, O(log n) find
+// no heap, fixed capacity
+
+struct FlatMap {
+    keys: u32,    // pointer to key array
+    values: u32,  // pointer to value array
+    len: u32,
+    cap: u32,
+}
+
+impl FlatMap {
+    fn insert(self_ptr: u32, key: u32, value: u32) {
+        // linear insert at correct sorted position
+    }
+
+    fn get(self_ptr: u32, key: u32) u32 {
+        // binary search
+        return 0;
+    }
+
+    fn contains(self_ptr: u32, key: u32) bool {
+        return false;
+    }
+
+    fn length(self_ptr: u32) u32 {
+        return 0;
+    }
+}

@@ -90,7 +90,7 @@ pub fn save_state(path: &Path, labels: &HashMap<String, usize>, code: &[u8]) {
 
 pub fn load_state(path: &Path) -> Option<(HashMap<String, usize>, Vec<u8>)> {
     let data = std::fs::read(path).ok()?;
-    let mut pos = 0;
+    let mut pos;
 
     if data.len() < 4 {
         return None;

@@ -1,0 +1,19 @@
+// demo: file I/O via FFI to libc
+// this would be used by the self-hosted compiler to read source files
+
+extern "C" fn open(path: u32, flags: u32, mode: u32) u32;
+extern "C" fn read(fd: u32, buf: u32, count: u32) u32;
+extern "C" fn write(fd: u32, buf: u32, count: u32) u32;
+extern "C" fn close(fd: u32) u32;
+
+fn read_file(path: u32, buf: u32, max_size: u32) u32 {
+    let fd = open(path, 0, 0);
+    if fd == 0 { return 0; }
+    let n = read(fd, buf, max_size);
+    close(fd);
+    return n;
+}
+
+fn write_stdout(buf: u32, len: u32) {
+    write(1, buf, len);
+}
