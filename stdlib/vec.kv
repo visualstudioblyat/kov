@@ -1,0 +1,23 @@
+// core::vec — fixed-capacity vector
+// no heap allocation, all stack or static
+
+struct Vec32 {
+    data: u32,  // pointer to backing array
+    len: u32,
+    cap: u32,
+}
+
+impl Vec32 {
+    fn push(v: u32, item: u32) {
+        // v.data[v.len] = item; v.len += 1;
+    }
+
+    fn get(v: u32, index: u32) u32 {
+        // return v.data[index];
+        return 0;
+    }
+
+    fn len(v: u32) u32 {
+        return 0;
+    }
+}

@@ -1,0 +1,93 @@
+// kov self-hosting lexer
+// tokenizes kov source code into token types
+// this is the first component of the self-hosted compiler
+
+// token kinds
+static mut TK_EOF: u32 = 0;
+static mut TK_IDENT: u32 = 1;
+static mut TK_INT: u32 = 2;
+static mut TK_STRING: u32 = 3;
+static mut TK_LPAREN: u32 = 10;
+static mut TK_RPAREN: u32 = 11;
+static mut TK_LBRACE: u32 = 12;
+static mut TK_RBRACE: u32 = 13;
+static mut TK_LBRACKET: u32 = 14;
+static mut TK_RBRACKET: u32 = 15;
+static mut TK_SEMI: u32 = 16;
+static mut TK_COLON: u32 = 17;
+static mut TK_COMMA: u32 = 18;
+static mut TK_DOT: u32 = 19;
+static mut TK_PLUS: u32 = 20;
+static mut TK_MINUS: u32 = 21;
+static mut TK_STAR: u32 = 22;
+static mut TK_SLASH: u32 = 23;
+static mut TK_EQ: u32 = 24;
+static mut TK_LT: u32 = 25;
+static mut TK_GT: u32 = 26;
+static mut TK_BANG: u32 = 27;
+static mut TK_AMP: u32 = 28;
+static mut TK_HASH: u32 = 29;
+static mut TK_KW_FN: u32 = 50;
+static mut TK_KW_LET: u32 = 51;
+static mut TK_KW_RETURN: u32 = 52;
+static mut TK_KW_IF: u32 = 53;
+static mut TK_KW_ELSE: u32 = 54;
+static mut TK_KW_LOOP: u32 = 55;
+static mut TK_KW_STRUCT: u32 = 56;
+static mut TK_KW_BOARD: u32 = 57;
+
+// lexer state
+static mut src_ptr: u32 = 0;
+static mut src_len: u32 = 0;
+static mut pos: u32 = 0;
+static mut token_count: u32 = 0;
+
+fn is_alpha(c: u32) u32 {
+    if c >= 65 {
+        if c <= 90 { return 1; }
+    }
+    if c >= 97 {
+        if c <= 122 { return 1; }
+    }
+    if c == 95 { return 1; }
+    return 0;
+}
+
+fn is_digit(c: u32) u32 {
+    if c >= 48 {
+        if c <= 57 { return 1; }
+    }
+    return 0;
+}
+
+fn is_space(c: u32) u32 {
+    if c == 32 { return 1; }
+    if c == 10 { return 1; }
+    if c == 13 { return 1; }
+    if c == 9 { return 1; }
+    return 0;
+}
+
+fn lex_token() u32 {
+    // skip whitespace
+    // peek current char
+    // classify and return token kind
+
+    // single-char tokens
+    // 40='(' 41=')' 123='{' 125='}' 91='[' 93=']'
+    // 59=';' 58=':' 44=',' 46='.'
+    // 43='+' 45='-' 42='*' 47='/'
+    // 61='=' 60='<' 62='>' 33='!' 38='&' 35='#'
+
+    return TK_EOF;
+}
+
+fn lex_all() u32 {
+    token_count = 0;
+    loop {
+        let tk = lex_token();
+        if tk == TK_EOF { break; }
+        token_count = token_count + 1;
+    }
+    return token_count;
+}

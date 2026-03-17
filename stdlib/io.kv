@@ -1,0 +1,7 @@
+// core::io — file I/O via FFI to libc
+
+extern "C" fn open(path: u32, flags: u32) u32;
+extern "C" fn read(fd: u32, buf: u32, count: u32) u32;
+extern "C" fn write(fd: u32, buf: u32, count: u32) u32;
+extern "C" fn close(fd: u32) u32;
+extern "C" fn exit(code: u32);
