@@ -17,6 +17,7 @@ pub mod stack;
 pub mod startup;
 pub mod svd;
 pub mod wcet;
+pub mod x86;
 
 use crate::ir::globals::GlobalTable;
 use crate::ir::{Function, Op, Terminator, Value};
