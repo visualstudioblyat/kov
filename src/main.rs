@@ -103,6 +103,44 @@ fn compile(source: &str) -> CompileResult {
         eprintln!("warning: {e}");
     }
 
+    // static assertions — evaluate const expressions at compile time
+    for item in &program.items {
+        if let parser::ast::TopItem::ConstAssert(expr, span) = item {
+            if let parser::ast::Expr::BoolLit(false, _) = expr {
+                die(&format!(
+                    "static_assert failed at {}..{}",
+                    span.start, span.end
+                ));
+            }
+            // for complex expressions, try const eval via a wrapper function
+            if let parser::ast::Expr::Binary(_, _, _, _) = expr {
+                let wrapper = format!(
+                    "fn __assert__() bool {{ return {}; }}",
+                    source[span.start as usize..]
+                        .split(')')
+                        .next()
+                        .unwrap_or("false")
+                        .trim_start_matches("static_assert(")
+                );
+                if let Ok(tokens) = lexer::Lexer::tokenize(&wrapper) {
+                    if let Ok(prog) = parser::Parser::new(tokens).parse() {
+                        let mut ir = ir::lower::Lowering::lower(&prog);
+                        for func in &mut ir.functions {
+                            ir::opt::optimize(func);
+                        }
+                        if let Some(func) = ir.functions.first() {
+                            if let Some(result) = ir::consteval::eval(func, &[]) {
+                                if result == 0 {
+                                    die("static_assert failed");
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     let board_name = program.items.iter().find_map(|item| {
         if let parser::ast::TopItem::Board(b) = item {
             Some(b.name.clone())

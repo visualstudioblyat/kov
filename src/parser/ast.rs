@@ -19,6 +19,7 @@ pub enum TopItem {
     ExternFn(ExternFnDecl),
     Trait(TraitDef),
     Impl(ImplBlock),
+    ConstAssert(Expr, Span),
 }
 
 #[derive(Debug, Clone)]

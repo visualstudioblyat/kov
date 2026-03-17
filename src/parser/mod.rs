@@ -186,6 +186,15 @@ impl Parser {
             TokenKind::Extern => Ok(TopItem::ExternFn(self.parse_extern_fn()?)),
             TokenKind::Trait => Ok(TopItem::Trait(self.parse_trait()?)),
             TokenKind::Impl => Ok(TopItem::Impl(self.parse_impl()?)),
+            TokenKind::Ident(name) if name == "static_assert" => {
+                let start = self.span();
+                self.advance();
+                self.expect(&TokenKind::LParen)?;
+                let expr = self.parse_expr()?;
+                self.expect(&TokenKind::RParen)?;
+                self.expect(&TokenKind::Semicolon)?;
+                Ok(TopItem::ConstAssert(expr, start))
+            }
             _ => Err(self.error(format!("unexpected token {:?} at top level", self.peek()))),
         }
     }
