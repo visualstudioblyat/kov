@@ -8,6 +8,7 @@ pub mod defmt;
 pub mod delta;
 pub mod disasm;
 pub mod elf;
+pub mod elf64;
 pub mod emit;
 pub mod encode;
 pub mod energy;
