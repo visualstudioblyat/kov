@@ -129,16 +129,19 @@ impl RegAlloc {
 
     // free registers for values that are dead after the current instruction
     fn expire_old(&mut self) {
-        let dead_vals: Vec<u32> = self
+        let mut dead_vals: Vec<u32> = self
             .map
             .keys()
             .filter(|val_id| self.last_use.get(val_id).copied().unwrap_or(0) < self.current_inst)
             .copied()
             .collect();
+        dead_vals.sort(); // deterministic order for reproducible builds
         for val_id in dead_vals {
             if let Some(reg) = self.map.remove(&val_id) {
                 if !self.free_regs.contains(&reg) {
                     self.free_regs.push(reg);
+                    self.free_regs.sort();
+                    self.free_regs.reverse(); // keep temporaries first
                 }
             }
         }
