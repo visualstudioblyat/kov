@@ -1,5 +1,8 @@
 use crate::{errors, lexer, parser, types};
 use std::io::{self, BufRead, Write};
+use std::sync::Mutex;
+
+static LAST_TEXT: Mutex<Option<String>> = Mutex::new(None);
 
 pub fn run_lsp() {
     let stdin = io::stdin();
@@ -60,6 +63,9 @@ fn handle_message(msg: &str) -> Option<String> {
         Some("textDocument/didOpen") | Some("textDocument/didChange") => {
             let uri = extract_json_str(msg, "\"uri\":").unwrap_or_default();
             let text = extract_json_str(msg, "\"text\":").unwrap_or_default();
+            if let Ok(mut last) = LAST_TEXT.lock() {
+                *last = Some(text.clone());
+            }
             let diagnostics = check_source(&text);
             let notification = format!(
                 r#"{{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{{"uri":"{}","diagnostics":[{}]}}}}"#,
@@ -68,10 +74,20 @@ fn handle_message(msg: &str) -> Option<String> {
             );
             Some(notification)
         }
-        Some("textDocument/hover") => Some(format!(
-            r#"{{"jsonrpc":"2.0","id":{},"result":{{"contents":"kov type info"}}}}"#,
-            id.unwrap_or(0)
-        )),
+        Some("textDocument/hover") => {
+            let text = extract_json_str(msg, "\"text\":")
+                .or_else(|| LAST_TEXT.lock().ok().and_then(|t| t.clone()))
+                .unwrap_or_default();
+            let line = extract_json_int(msg, "\"line\":").unwrap_or(0) as usize;
+            let ch = extract_json_int(msg, "\"character\":").unwrap_or(0) as usize;
+            let word = word_at_position(&text, line, ch);
+            let info = hover_info(&word, &text);
+            Some(format!(
+                r#"{{"jsonrpc":"2.0","id":{},"result":{{"contents":"{}"}}}}"#,
+                id.unwrap_or(0),
+                escape_json(&info)
+            ))
+        }
         Some("textDocument/completion") => {
             let items: Vec<String> = KEYWORDS
                 .iter()
@@ -173,6 +189,80 @@ fn extract_json_int(json: &str, key: &str) -> Option<i64> {
         .find(|c: char| !c.is_ascii_digit() && c != '-')
         .unwrap_or(rest.len());
     rest[..end].parse().ok()
+}
+
+fn word_at_position(text: &str, line: usize, ch: usize) -> String {
+    let target_line = text.lines().nth(line).unwrap_or("");
+    if ch >= target_line.len() {
+        return String::new();
+    }
+    let bytes = target_line.as_bytes();
+    let mut start = ch;
+    let mut end = ch;
+    while start > 0 && (bytes[start - 1].is_ascii_alphanumeric() || bytes[start - 1] == b'_') {
+        start -= 1;
+    }
+    while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_') {
+        end += 1;
+    }
+    target_line[start..end].to_string()
+}
+
+fn hover_info(word: &str, source: &str) -> String {
+    // check keywords
+    match word {
+        "fn" => return "keyword: function declaration".into(),
+        "let" => return "keyword: variable binding".into(),
+        "mut" => return "keyword: mutable variable".into(),
+        "if" | "else" => return "keyword: conditional".into(),
+        "loop" | "while" | "for" => return "keyword: loop".into(),
+        "match" => return "keyword: pattern matching".into(),
+        "return" => return "keyword: return from function".into(),
+        "break" => return "keyword: exit loop".into(),
+        "continue" => return "keyword: skip to next iteration".into(),
+        "struct" => return "keyword: struct definition".into(),
+        "enum" => return "keyword: enum definition".into(),
+        "trait" => return "keyword: trait definition".into(),
+        "impl" => return "keyword: implementation block".into(),
+        "board" => return "keyword: board hardware definition".into(),
+        "try" => return "keyword: unwrap error union or propagate".into(),
+        "static" => return "keyword: static/global variable".into(),
+        "extern" => return "keyword: foreign function interface".into(),
+        _ => {}
+    }
+    // check types
+    match word {
+        "u8" | "u16" | "u32" | "u64" => {
+            return format!("type: unsigned {}-bit integer", &word[1..]);
+        }
+        "i8" | "i16" | "i32" | "i64" => return format!("type: signed {}-bit integer", &word[1..]),
+        "bool" => return "type: boolean (true/false)".into(),
+        "void" => return "type: no value".into(),
+        _ => {}
+    }
+    // try to find function signature in source
+    if let Ok(tokens) = lexer::Lexer::tokenize(source) {
+        if let Ok(program) = parser::Parser::new(tokens).parse() {
+            for item in &program.items {
+                if let parser::ast::TopItem::Function(f) = item {
+                    if f.name == word {
+                        let params: Vec<String> = f
+                            .params
+                            .iter()
+                            .map(|p| format!("{}: {:?}", p.name, p.ty))
+                            .collect();
+                        let ret = f
+                            .ret_type
+                            .as_ref()
+                            .map(|t| format!(" -> {:?}", t))
+                            .unwrap_or_default();
+                        return format!("fn {}({}){}", f.name, params.join(", "), ret);
+                    }
+                }
+            }
+        }
+    }
+    format!("{}", word)
 }
 
 const KEYWORDS: &[&str] = &[
