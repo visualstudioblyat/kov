@@ -107,6 +107,15 @@ impl Lowering {
                     collect_body_statics(&f.body, &mut globals);
                     functions.push(lower_fn(f, &periph_map, &globals, &struct_layouts));
                 }
+                TopItem::Impl(imp) => {
+                    for method in &imp.methods {
+                        // mangle name: Type_method
+                        let mut mangled = method.clone();
+                        mangled.name = format!("{}_{}", imp.target_type, method.name);
+                        collect_body_statics(&mangled.body, &mut globals);
+                        functions.push(lower_fn(&mangled, &periph_map, &globals, &struct_layouts));
+                    }
+                }
                 TopItem::Interrupt(i) => {
                     collect_body_statics(&i.body, &mut globals);
                     let fake_fn = ast::FnDef {

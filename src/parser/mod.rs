@@ -66,7 +66,9 @@ impl Parser {
                 | TokenKind::Import
                 | TokenKind::Interrupt
                 | TokenKind::Type
-                | TokenKind::Extern => return,
+                | TokenKind::Extern
+                | TokenKind::Trait
+                | TokenKind::Impl => return,
                 _ => {
                     self.advance_any();
                 }
@@ -182,6 +184,8 @@ impl Parser {
             TokenKind::Static => Ok(TopItem::Static(self.parse_static()?)),
             TokenKind::Type => Ok(TopItem::TypeAlias(self.parse_type_alias()?)),
             TokenKind::Extern => Ok(TopItem::ExternFn(self.parse_extern_fn()?)),
+            TokenKind::Trait => Ok(TopItem::Trait(self.parse_trait()?)),
+            TokenKind::Impl => Ok(TopItem::Impl(self.parse_impl()?)),
             _ => Err(self.error(format!("unexpected token {:?} at top level", self.peek()))),
         }
     }
@@ -481,6 +485,75 @@ impl Parser {
             name,
             params,
             ret_type,
+            span: Span::new(start.start, end.end),
+        })
+    }
+
+    fn parse_trait(&mut self) -> R<TraitDef> {
+        let start = self.span();
+        self.advance(); // trait
+        let name = self.expect_ident()?;
+        self.expect(&TokenKind::LBrace)?;
+        let mut methods = Vec::new();
+        while !matches!(self.peek(), TokenKind::RBrace) {
+            let ms = self.span();
+            self.expect(&TokenKind::Fn)?;
+            let mname = self.expect_ident()?;
+            self.expect(&TokenKind::LParen)?;
+            let params = self.parse_param_list()?;
+            self.expect(&TokenKind::RParen)?;
+            let ret_type = if !matches!(self.peek(), TokenKind::Semicolon | TokenKind::LBrace) {
+                Some(self.parse_type()?)
+            } else {
+                None
+            };
+            let (has_default, body) = if matches!(self.peek(), TokenKind::LBrace) {
+                let b = self.parse_block()?;
+                (true, Some(b))
+            } else {
+                self.expect(&TokenKind::Semicolon)?;
+                (false, None)
+            };
+            methods.push(TraitMethod {
+                name: mname,
+                params,
+                ret_type,
+                has_default,
+                body,
+                span: ms,
+            });
+        }
+        let end = self.expect(&TokenKind::RBrace)?;
+        Ok(TraitDef {
+            name,
+            methods,
+            span: Span::new(start.start, end.end),
+        })
+    }
+
+    fn parse_impl(&mut self) -> R<ImplBlock> {
+        let start = self.span();
+        self.advance(); // impl
+        let first = self.expect_ident()?;
+        // impl Trait for Type { ... } OR impl Type { ... }
+        let (trait_name, target_type) = if matches!(self.peek(), TokenKind::For) {
+            self.advance(); // for
+            let target = self.expect_ident()?;
+            (Some(first), target)
+        } else {
+            (None, first)
+        };
+        self.expect(&TokenKind::LBrace)?;
+        let mut methods = Vec::new();
+        while !matches!(self.peek(), TokenKind::RBrace) {
+            let attrs = self.parse_attributes()?;
+            methods.push(self.parse_fn(attrs)?);
+        }
+        let end = self.expect(&TokenKind::RBrace)?;
+        Ok(ImplBlock {
+            trait_name,
+            target_type,
+            methods,
             span: Span::new(start.start, end.end),
         })
     }
@@ -1499,6 +1572,46 @@ mod tests {
                 assert_eq!(s.type_params[1].name, "B");
             }
             _ => panic!("expected struct"),
+        }
+    }
+
+    #[test]
+    fn parse_trait_def() {
+        let prog = parse("trait Gpio { fn set_high(); fn set_low(); }");
+        match &prog.items[0] {
+            TopItem::Trait(t) => {
+                assert_eq!(t.name, "Gpio");
+                assert_eq!(t.methods.len(), 2);
+                assert_eq!(t.methods[0].name, "set_high");
+                assert!(!t.methods[0].has_default);
+            }
+            _ => panic!("expected trait"),
+        }
+    }
+
+    #[test]
+    fn parse_impl_block() {
+        let prog = parse("impl Gpio for EspPin { fn set_high() { } fn set_low() { } }");
+        match &prog.items[0] {
+            TopItem::Impl(i) => {
+                assert_eq!(i.trait_name, Some("Gpio".to_string()));
+                assert_eq!(i.target_type, "EspPin");
+                assert_eq!(i.methods.len(), 2);
+            }
+            _ => panic!("expected impl"),
+        }
+    }
+
+    #[test]
+    fn parse_inherent_impl() {
+        let prog = parse("impl Point { fn new(x: u32, y: u32) Point { } }");
+        match &prog.items[0] {
+            TopItem::Impl(i) => {
+                assert!(i.trait_name.is_none());
+                assert_eq!(i.target_type, "Point");
+                assert_eq!(i.methods.len(), 1);
+            }
+            _ => panic!("expected impl"),
         }
     }
 }

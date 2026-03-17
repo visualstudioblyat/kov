@@ -17,6 +17,33 @@ pub enum TopItem {
     Static(StaticDef),
     TypeAlias(TypeAlias),
     ExternFn(ExternFnDecl),
+    Trait(TraitDef),
+    Impl(ImplBlock),
+}
+
+#[derive(Debug, Clone)]
+pub struct TraitDef {
+    pub name: String,
+    pub methods: Vec<TraitMethod>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct TraitMethod {
+    pub name: String,
+    pub params: Vec<Param>,
+    pub ret_type: Option<Type>,
+    pub has_default: bool,
+    pub body: Option<Block>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone)]
+pub struct ImplBlock {
+    pub trait_name: Option<String>,
+    pub target_type: String,
+    pub methods: Vec<FnDef>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone)]
