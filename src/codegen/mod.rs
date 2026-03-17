@@ -266,8 +266,30 @@ impl CodeGen {
             ra.assign(param_val, A0 + i as u32);
         }
 
+        // move params from arg regs to callee-saved regs if function has calls
+        let has_calls = func
+            .blocks
+            .iter()
+            .any(|b| b.insts.iter().any(|i| matches!(&i.op, Op::Call(_, _))));
         // generate body into temporary emitter
         std::mem::swap(&mut self.emitter, &mut body_emitter);
+
+        if has_calls && !func.params.is_empty() {
+            for (i, _) in func.params.iter().enumerate() {
+                if i < 8 {
+                    let param_val = Value(i as u32);
+                    // move from A-reg to an S-reg
+                    if let Some(s_idx) = ra.free_regs.iter().position(|r| S_REGS.contains(r)) {
+                        let s_reg = ra.free_regs.remove(s_idx);
+                        self.emitter.emit32(mv(s_reg, A0 + i as u32));
+                        ra.map.insert(param_val.0, s_reg);
+                        if !ra.used_s_regs.contains(&s_reg) {
+                            ra.used_s_regs.push(s_reg);
+                        }
+                    }
+                }
+            }
+        }
 
         for (bi, block) in func.blocks.iter().enumerate() {
             let block_label = format!("{}.b{}", func.name, bi);
@@ -458,6 +480,28 @@ impl CodeGen {
             }
 
             Op::Call(name, args) => {
+                // save live caller-saved values to callee-saved regs before call
+                let caller_saved: Vec<u32> = vec![T0, T1, T2, A0, A1, A2, A3, A4, A5, A6, A7];
+                let saves: Vec<(u32, u32)> = ra
+                    .map
+                    .iter()
+                    .filter(|(_, reg)| caller_saved.contains(reg))
+                    .map(|(&val_id, &reg)| (val_id, reg))
+                    .collect();
+
+                for (val_id, old_reg) in &saves {
+                    // find a free callee-saved register
+                    let s_reg = ra.free_regs.iter().find(|r| S_REGS.contains(r)).copied();
+                    if let Some(s) = s_reg {
+                        self.emitter.emit32(mv(s, *old_reg));
+                        ra.map.insert(*val_id, s);
+                        ra.free_regs.retain(|&r| r != s);
+                        if !ra.used_s_regs.contains(&s) {
+                            ra.used_s_regs.push(s);
+                        }
+                    }
+                }
+
                 for (i, arg) in args.iter().enumerate() {
                     if i < 8 {
                         let src = ra.get(*arg);

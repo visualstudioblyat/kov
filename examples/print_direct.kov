@@ -1,0 +1,14 @@
+fn putchar(c: u32) {
+    write_mmio(4026531860, c);
+}
+
+fn main() {
+    let ptr = "hello" as u32;
+    let b0 = read_byte(ptr);
+    putchar(b0);
+    let b1 = read_byte(ptr + 1);
+    putchar(b1);
+    let b2 = read_byte(ptr + 2);
+    putchar(b2);
+    putchar(10);
+}

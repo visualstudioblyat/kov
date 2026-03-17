@@ -686,6 +686,13 @@ fn cmd_run(args: &[String]) {
     cpu.mem.load_flash(&result.code);
     cpu.regs[2] = result.ram_top;
     // load .data section (strings, initialized globals) into RAM
+    if !result.data_section.is_empty() {
+        eprintln!(
+            "  .data:    {} bytes loaded at {:#010X}",
+            result.data_section.len(),
+            result.ram_base
+        );
+    }
     for (i, &byte) in result.data_section.iter().enumerate() {
         cpu.mem.write8(result.ram_base + i as u32, byte);
     }
