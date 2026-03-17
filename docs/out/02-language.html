@@ -1,0 +1,123 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Language Reference — Kov</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="layout">
+<aside><nav>
+<ul>
+<li><a href="index.html">Home</a></li>
+<li><a href="01-getting-started.html">Getting Started</a></li>
+<li class="active"><a href="02-language.html">Language Reference</a></li>
+<li><a href="03-cli.html">CLI Reference</a></li>
+</ul>
+</nav>
+</aside>
+<main><h1 id="language-reference">Language Reference</h1>
+<h2 id="types">types</h2>
+<p>kov has explicit types with no implicit promotion. <code>u8 + u32</code> is a compile error.</p>
+<p>| type | size | description | |------|------|-------------| | <code>u8</code> | 1 byte | unsigned 8-bit | | <code>u16</code> | 2 bytes | unsigned 16-bit | | <code>u32</code> | 4 bytes | unsigned 32-bit | | <code>u64</code> | 8 bytes | unsigned 64-bit | | <code>i8</code> to <code>i64</code> | varies | signed integers | | <code>bool</code> | 1 byte | true or false | | <code>void</code> | 0 | no value | | <code>!T</code> | 8 bytes | error union |</p>
+<h2 id="variables">variables</h2>
+<pre><code class="lang-kov"><span class="keyword">let</span> x = <span class="number">42</span>;
+<span class="keyword">let</span> y: <span class="type">u32</span> = <span class="number">100</span>;
+<span class="keyword">let</span> <span class="keyword">mut</span> counter = <span class="number">0</span>;
+counter = counter + <span class="number">1</span>;
+</code></pre>
+<p>type inference works. <code>let x = 42</code> infers <code>u32</code>.</p>
+<h2 id="functions">functions</h2>
+<pre><code class="lang-kov"><span class="keyword">fn</span> add(a: <span class="type">u32</span>, b: <span class="type">u32</span>) <span class="type">u32</span> {
+    <span class="keyword">return</span> a + b;
+}
+</code></pre>
+<h2 id="generics">generics</h2>
+<pre><code class="lang-kov"><span class="keyword">fn</span> max&lt;T&gt;(a: T, b: T) T {
+    <span class="keyword">if</span> a &gt; b { <span class="keyword">return</span> a; }
+    <span class="keyword">return</span> b;
+}
+</code></pre>
+<p>generics are monomorphized. <code>max(3, 4)</code> generates <code>max_u32</code> at compile time.</p>
+<h2 id="structs">structs</h2>
+<pre><code class="lang-kov"><span class="keyword">struct</span> Point { x: <span class="type">u32</span>, y: <span class="type">u32</span> }
+
+<span class="keyword">impl</span> Point {
+    <span class="keyword">fn</span> sum(px: <span class="type">u32</span>, py: <span class="type">u32</span>) <span class="type">u32</span> {
+        <span class="keyword">return</span> px + py;
+    }
+}
+
+<span class="keyword">fn</span> main() {
+    <span class="keyword">let</span> p = Point { x: <span class="number">3</span>, y: <span class="number">4</span> };
+    <span class="keyword">let</span> s = p.sum();
+}
+</code></pre>
+<p>fields are laid out with natural alignment.</p>
+<h2 id="enums">enums</h2>
+<pre><code class="lang-kov"><span class="keyword">enum</span> Option { None, Some(<span class="type">u32</span>) }
+
+<span class="keyword">fn</span> unwrap(opt: Option) <span class="type">u32</span> {
+    <span class="keyword">match</span> opt {
+        Some(val) =&gt; val,
+        _ =&gt; <span class="number">0</span>,
+    }
+}
+</code></pre>
+<p>enums with data are tagged unions. the compiler checks exhaustiveness.</p>
+<h2 id="error-unions">error unions</h2>
+<pre><code class="lang-kov"><span class="keyword">fn</span> read_sensor() !<span class="type">u32</span> {
+    <span class="keyword">if</span> error_condition { <span class="keyword">return</span> <span class="number">0</span>; }
+    <span class="keyword">return</span> <span class="number">42</span>;
+}
+
+<span class="keyword">fn</span> main() !<span class="type">u32</span> {
+    <span class="keyword">let</span> val = <span class="keyword">try</span> read_sensor();
+    <span class="keyword">return</span> val;
+}
+</code></pre>
+<p><code>try</code> checks the error tag and propagates if nonzero.</p>
+<h2 id="control-flow">control flow</h2>
+<pre><code class="lang-kov"><span class="keyword">if</span> x &gt; <span class="number">0</span> {
+    <span class="comment">// ...</span>
+} <span class="keyword">else</span> <span class="keyword">if</span> x == <span class="number">0</span> {
+    <span class="comment">// ...</span>
+} <span class="keyword">else</span> {
+    <span class="comment">// ...</span>
+}
+
+<span class="keyword">loop</span> { <span class="keyword">break</span>; }
+<span class="keyword">while</span> x &lt; <span class="number">10</span> { x = x + <span class="number">1</span>; }
+<span class="keyword">for</span> i <span class="keyword">in</span> <span class="number">0</span>..<span class="number">10</span> { }
+
+'outer: <span class="keyword">loop</span> {
+    <span class="keyword">loop</span> { <span class="keyword">break</span> 'outer; }
+}
+
+<span class="keyword">match</span> value {
+    <span class="number">0</span> =&gt; handle_zero(),
+    <span class="number">1</span> =&gt; handle_one(),
+    _ =&gt; handle_default(),
+}
+</code></pre>
+<p><code>&amp;&amp;</code> and <code>||</code> are short-circuit.</p>
+<h2 id="board-definitions">board definitions</h2>
+<pre><code class="lang-kov"><span class="keyword">board</span> esp32c3 {
+    gpio: GPIO @ <span class="number">0x6000_4000</span>,
+    uart: UART @ <span class="number">0x6000_0000</span>,
+    clock: <span class="number">160_000_000</span>,
+}
+</code></pre>
+<p>the board definition is part of the grammar. peripheral addresses come from the hardware datasheet.</p>
+<h2 id="attributes">attributes</h2>
+<pre><code class="lang-kov"><span class="attr">#[stack(512)]</span>     <span class="comment">// compile error if stack exceeds 512 bytes</span>
+<span class="attr">#[max_cycles(200)]</span> <span class="comment">// compile error if WCET exceeds 200 cycles</span>
+<span class="attr">#[test]</span>           <span class="comment">// marks a test function</span>
+<span class="attr">#[cfg(esp32c3)]</span>   <span class="comment">// conditional compilation</span>
+</code></pre>
+</main>
+</div>
+<footer><p>generated by kovdocs — built with the kov compiler</p></footer>
+</body>
+</html>
