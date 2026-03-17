@@ -31,6 +31,21 @@ impl BoardConfig {
                 ram_start: 0x8000_0000,
                 ram_size: 16 * 1024,
             }),
+            "stm32f4" => Some(Self {
+                flash_start: 0x0800_0000,
+                ram_start: 0x2000_0000,
+                ram_size: 128 * 1024,
+            }),
+            "nrf52840" => Some(Self {
+                flash_start: 0x0000_0000,
+                ram_start: 0x2000_0000,
+                ram_size: 256 * 1024,
+            }),
+            "rp2040" => Some(Self {
+                flash_start: 0x1000_0000,
+                ram_start: 0x2000_0000,
+                ram_size: 264 * 1024,
+            }),
             _ => None,
         }
     }

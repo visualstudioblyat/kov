@@ -134,7 +134,7 @@ fn substitute_block(block: &Block, subst: &HashMap<String, Type>) -> Block {
     }
 }
 
-fn substitute_stmt(stmt: &Stmt, subst: &HashMap<String, Type>) -> Stmt {
+fn substitute_stmt(stmt: &Stmt, _subst: &HashMap<String, Type>) -> Stmt {
     // for now just clone — type substitution in expressions isn't needed
     // because the lowering resolves types from the substituted params
     stmt.clone()

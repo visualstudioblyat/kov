@@ -28,6 +28,8 @@ fn main() {
         eprintln!("  asm <file.kv>                 show generated assembly");
         eprintln!("  trace <file.kv> [-c cycles]   compile, execute, output JSON trace");
         eprintln!("  wcet <file.kv>                worst-case execution time analysis");
+        eprintln!("  flash <file.kv> [--chip X]    compile and flash to hardware");
+        eprintln!("  boards                        list supported boards");
         eprintln!("  check <file.kv>               type check only");
         eprintln!("  lex <file.kv>                 dump tokens");
         eprintln!();
@@ -43,6 +45,17 @@ fn main() {
         "run" => cmd_run(&args),
         "trace" => cmd_trace(&args),
         "wcet" => cmd_wcet(&args),
+        "flash" => cmd_flash(&args),
+        "boards" => {
+            eprintln!("supported boards:");
+            eprintln!("  esp32c3     ESP32-C3 (RISC-V, 400KB RAM, 160MHz)");
+            eprintln!("  ch32v003    WCH CH32V003 (RISC-V, 2KB RAM, 48MHz, ~$0.10)");
+            eprintln!("  gd32vf103   GigaDevice GD32VF103 (RISC-V, 32KB RAM, 108MHz)");
+            eprintln!("  fe310       SiFive FE310 (RISC-V, 16KB RAM, 320MHz)");
+            eprintln!("  stm32f4     STM32F4 (ARM Cortex-M4, 128KB RAM, 168MHz)");
+            eprintln!("  nrf52840    Nordic nRF52840 (ARM Cortex-M4F, 256KB RAM, 64MHz)");
+            eprintln!("  rp2040      Raspberry Pi Pico (ARM Cortex-M0+, 264KB RAM, 133MHz)");
+        }
         "check" => cmd_check(&args),
         _ => {
             eprintln!("unknown command: {}", args[1]);
@@ -483,6 +496,71 @@ fn cmd_wcet(args: &[String]) {
     eprintln!("  stack analysis:");
     eprint!("{}", codegen::stack::format_report(&stack_results));
     let _ = result;
+}
+
+fn cmd_flash(args: &[String]) {
+    if args.len() < 3 {
+        eprintln!("usage: kov flash <file.kv> [--chip <name>]");
+        process::exit(1);
+    }
+
+    let input = &args[2];
+    let source = read_file(input);
+    let result = compile(&source);
+
+    // detect chip from board definition or --chip flag
+    let chip = find_flag(args, "--chip").unwrap_or_else(|| {
+        // try to extract from board name in source
+        let board_name = result
+            .labels
+            .keys()
+            .find(|k| k.starts_with("_start"))
+            .map(|_| "esp32c3") // default
+            .unwrap_or("esp32c3");
+        board_name.to_string()
+    });
+
+    // write temporary ELF
+    let elf_path = format!("{}.elf", input.trim_end_matches(".kv"));
+    let elf = codegen::elf::ElfWriter::new(result.flash_base, result.flash_base)
+        .write(&result.compressed);
+    if let Err(e) = std::fs::write(&elf_path, &elf) {
+        die(&format!("cannot write {elf_path}: {e}"));
+    }
+
+    eprintln!(
+        "  compiled: {} bytes ({} compressed)",
+        result.code.len(),
+        result.compressed.len()
+    );
+    eprintln!("  flashing: {} → {}", input, chip);
+
+    // invoke probe-rs
+    let status = std::process::Command::new("probe-rs")
+        .args(["download", "--chip", &chip, &elf_path])
+        .status();
+
+    match status {
+        Ok(s) if s.success() => {
+            eprintln!("  flash: ok");
+            // reset
+            let _ = std::process::Command::new("probe-rs")
+                .args(["reset", "--chip", &chip])
+                .status();
+        }
+        Ok(s) => {
+            die(&format!("probe-rs failed with exit code {:?}", s.code()));
+        }
+        Err(e) => {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                die("probe-rs not found. install with: cargo install probe-rs-tools");
+            }
+            die(&format!("failed to run probe-rs: {e}"));
+        }
+    }
+
+    // cleanup
+    let _ = std::fs::remove_file(&elf_path);
 }
 
 fn cmd_check(args: &[String]) {
