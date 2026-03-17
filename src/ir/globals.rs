@@ -22,6 +22,12 @@ pub struct GlobalTable {
     next_string: u32,
 }
 
+impl Default for GlobalTable {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GlobalTable {
     pub fn new() -> Self {
         Self {

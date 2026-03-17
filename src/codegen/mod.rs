@@ -205,6 +205,12 @@ impl RegAlloc {
     }
 }
 
+impl Default for CodeGen {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CodeGen {
     pub fn new() -> Self {
         Self {

@@ -11,6 +11,7 @@ pub struct TypeChecker {
     structs: HashMap<String, Vec<(String, Ty)>>,
     enums: HashMap<String, Vec<String>>,
     fn_sigs: HashMap<String, (Vec<Ty>, Ty)>,
+    statics: HashMap<String, Ty>,
 }
 
 struct FnScope {
@@ -19,6 +20,12 @@ struct FnScope {
     used_vars: HashSet<String>,       // vars that were actually read
     ret_type: Ty,
     is_interrupt: bool,
+}
+
+impl Default for TypeChecker {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TypeChecker {
@@ -31,6 +38,7 @@ impl TypeChecker {
             structs: HashMap::new(),
             enums: HashMap::new(),
             fn_sigs: HashMap::new(),
+            statics: HashMap::new(),
         }
     }
 
@@ -43,6 +51,9 @@ impl TypeChecker {
                 TopItem::Struct(s) => self.register_struct(s),
                 TopItem::Enum(e) => self.register_enum(e),
                 TopItem::Function(f) => self.register_fn(f),
+                TopItem::Static(s) => {
+                    self.statics.insert(s.name.clone(), Ty::from_ast(&s.ty));
+                }
                 TopItem::ExternFn(e) => {
                     let params: Vec<Ty> = e.params.iter().map(|p| Ty::from_ast(&p.ty)).collect();
                     let ret = e.ret_type.as_ref().map(Ty::from_ast).unwrap_or(Ty::Void);
@@ -392,6 +403,8 @@ impl TypeChecker {
             Expr::Ident(name, span) => {
                 if let Some(ty) = scope.vars.get(name) {
                     scope.used_vars.insert(name.clone());
+                    ty.clone()
+                } else if let Some(ty) = self.statics.get(name) {
                     ty.clone()
                 } else {
                     self.err(*span, format!("undefined variable: {}", name));

@@ -112,7 +112,7 @@ fn substitute_type(ty: &Type, subst: &HashMap<String, Type>) -> Type {
             args.iter().map(|a| substitute_type(a, subst)).collect(),
         ),
         Type::Ref(inner, m) => Type::Ref(Box::new(substitute_type(inner, subst)), *m),
-        Type::Ptr(inner, r) => Type::Ptr(Box::new(substitute_type(inner, subst)), r.clone()),
+        Type::Ptr(inner, r) => Type::Ptr(Box::new(substitute_type(inner, subst)), *r),
         Type::Array(inner, size) => {
             Type::Array(Box::new(substitute_type(inner, subst)), size.clone())
         }

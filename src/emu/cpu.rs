@@ -21,6 +21,12 @@ pub struct Snapshot {
     pub mmio_write: Option<(u32, u32)>, // (addr, value) if this cycle wrote MMIO
 }
 
+impl Default for Trace {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Trace {
     pub fn new() -> Self {
         Self {

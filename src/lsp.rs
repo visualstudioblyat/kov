@@ -158,8 +158,7 @@ fn escape_json(s: &str) -> String {
 fn extract_json_str(json: &str, key: &str) -> Option<String> {
     let start = json.find(key)? + key.len();
     let rest = json[start..].trim();
-    if rest.starts_with('"') {
-        let inner = &rest[1..];
+    if let Some(inner) = rest.strip_prefix('"') {
         let end = inner.find('"')?;
         Some(inner[..end].to_string())
     } else {

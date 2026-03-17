@@ -6,6 +6,12 @@ pub struct BuildConfig {
     pub release: bool,
 }
 
+impl Default for BuildConfig {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BuildConfig {
     pub fn new() -> Self {
         Self {

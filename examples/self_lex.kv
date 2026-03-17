@@ -1,0 +1,64 @@
+// self-hosting proof of concept: a minimal lexer written in Kov
+// this lexes a simple expression like "1 + 2" into tokens
+
+board esp32c3 {
+    gpio: GPIO @ 0x6000_4000,
+    uart: UART @ 0x6000_0000,
+    clock: 40_000,
+}
+
+static mut token_count: u32 = 0;
+static mut token_kinds: u32 = 0;
+
+fn is_digit(c: u32) u32 {
+    if c >= 48 {
+        if c <= 57 {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+fn is_space(c: u32) u32 {
+    if c == 32 { return 1; }
+    if c == 10 { return 1; }
+    if c == 13 { return 1; }
+    if c == 9 { return 1; }
+    return 0;
+}
+
+fn lex_char(c: u32) u32 {
+    // returns token kind: 1=number, 2=plus, 3=minus, 4=star, 5=slash, 0=unknown
+    if is_digit(c) == 1 { return 1; }
+    if c == 43 { return 2; }
+    if c == 45 { return 3; }
+    if c == 42 { return 4; }
+    if c == 47 { return 5; }
+    return 0;
+}
+
+#[stack(256)]
+fn main(b: &mut esp32c3) {
+    let led = b.gpio.pin(2, .output);
+
+    // lex "1+2" (ASCII: 49 43 50)
+    let t1 = lex_char(49);
+    let t2 = lex_char(43);
+    let t3 = lex_char(50);
+
+    token_count = 3;
+
+    // signal: blink 3 times (one per token)
+    led.high();
+    delay_ms(1);
+    led.low();
+    delay_ms(1);
+    led.high();
+    delay_ms(1);
+    led.low();
+    delay_ms(1);
+    led.high();
+    delay_ms(1);
+    led.low();
+    delay_ms(1);
+}

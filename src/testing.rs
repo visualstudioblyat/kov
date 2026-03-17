@@ -145,7 +145,7 @@ fn compile_and_run(source: &str, max_cycles: u64) -> Result<(u64, bool), String>
         cg.gen_function(func);
     }
 
-    let code = cg.finish().map_err(|e| e)?;
+    let code = cg.finish()?;
 
     let flash_base = board_config
         .as_ref()

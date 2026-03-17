@@ -26,6 +26,12 @@ pub struct MmioAccess {
     pub is_write: bool,
 }
 
+impl Default for Memory {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Memory {
     pub fn new() -> Self {
         Self::with_bases(FLASH_BASE, RAM_BASE)

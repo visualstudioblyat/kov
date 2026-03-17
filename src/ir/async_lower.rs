@@ -2,8 +2,7 @@
 // async fn read() -> u32 { let x = uart.read().await; x + 1 }
 // becomes a state machine struct with resume() method
 
-use super::types::IrType;
-use super::{BasicBlock, Function, Op, Terminator, Value};
+use super::{Function, Op, Value};
 
 #[derive(Debug)]
 pub struct AsyncStateMachine {

@@ -18,6 +18,12 @@ pub enum FixupKind {
     Jump,   // J-type, ±1MB
 }
 
+impl Default for Emitter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Emitter {
     pub fn new() -> Self {
         Self {
