@@ -12,6 +12,7 @@ mod emu;
 mod errors;
 mod ir;
 mod lexer;
+mod lsp;
 mod parser;
 mod pkg;
 mod testing;
@@ -38,6 +39,7 @@ fn main() {
         eprintln!("  boards                        list supported boards");
         eprintln!("  svd <file.svd> [--name X]     generate board def from SVD");
         eprintln!("  check <file.kv>               type check only");
+        eprintln!("  lsp                           start language server");
         eprintln!("  lex <file.kv>                 dump tokens");
         eprintln!();
         eprintln!("flags:");
@@ -122,6 +124,7 @@ fn main() {
             let peripherals = codegen::svd::parse_svd(&xml);
             println!("{}", codegen::svd::generate_kov(&peripherals, &name));
         }
+        "lsp" => lsp::run_lsp(),
         "check" => cmd_check(&args),
         _ => {
             eprintln!("unknown command: {}", args[1]);

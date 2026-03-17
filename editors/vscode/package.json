@@ -1,0 +1,24 @@
+{
+  "name": "kov",
+  "displayName": "Kov Language",
+  "description": "Language support for Kov (.kv files)",
+  "version": "0.1.0",
+  "publisher": "visualstudioblyat",
+  "engines": { "vscode": "^1.80.0" },
+  "categories": ["Programming Languages"],
+  "activationEvents": ["onLanguage:kov"],
+  "main": "./extension.js",
+  "contributes": {
+    "languages": [{
+      "id": "kov",
+      "aliases": ["Kov"],
+      "extensions": [".kv"],
+      "configuration": "./language-configuration.json"
+    }],
+    "grammars": [{
+      "language": "kov",
+      "scopeName": "source.kov",
+      "path": "./syntaxes/kov.tmLanguage.json"
+    }]
+  }
+}
