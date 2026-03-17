@@ -1025,7 +1025,7 @@ mod tests {
 
     #[test]
     fn lower_blink() {
-        let source = std::fs::read_to_string("examples/blink.kv").unwrap();
+        let source = std::fs::read_to_string("examples/blink.kov").unwrap();
         let tokens = Lexer::tokenize(&source).unwrap();
         let program = Parser::new(tokens).parse().unwrap();
         let ir = Lowering::lower(&program);

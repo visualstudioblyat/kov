@@ -4,7 +4,7 @@
 
 #[test]
 fn blink_all_instructions_valid_rv32im() {
-    let source = std::fs::read_to_string("examples/blink.kv").unwrap();
+    let source = std::fs::read_to_string("examples/blink.kov").unwrap();
     let output = kovlib::compile(&source).unwrap();
 
     // every 4-byte aligned word must be a valid RV32IM instruction
@@ -29,7 +29,7 @@ fn blink_all_instructions_valid_rv32im() {
 
 #[test]
 fn blink_boots_and_writes_gpio() {
-    let source = std::fs::read_to_string("examples/blink.kv").unwrap();
+    let source = std::fs::read_to_string("examples/blink.kov").unwrap();
     let result = kovlib::run(&source, 500_000).unwrap();
 
     assert!(result.cycles > 0, "should execute some cycles");
@@ -84,7 +84,7 @@ fn blink_gpio_toggles() {
 
 #[test]
 fn emulator_register_invariants() {
-    let source = std::fs::read_to_string("examples/blink.kv").unwrap();
+    let source = std::fs::read_to_string("examples/blink.kov").unwrap();
     let output = kovlib::compile(&source).unwrap();
 
     let mut cpu =

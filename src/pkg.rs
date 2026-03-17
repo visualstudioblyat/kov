@@ -174,7 +174,7 @@ fn main(b: &mut {}) {{
 "#,
         board, board
     );
-    std::fs::write(dir.join("main.kv"), main_src).map_err(|e| format!("{e}"))?;
+    std::fs::write(dir.join("main.kov"), main_src).map_err(|e| format!("{e}"))?;
     Ok(())
 }
 

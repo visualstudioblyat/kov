@@ -1,6 +1,6 @@
 # kov benchmarks
 
-measured on the blink.kv example (ESP32-C3 target).
+measured on the blink.kov example (ESP32-C3 target).
 
 ## code size
 

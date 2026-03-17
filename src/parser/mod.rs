@@ -1555,7 +1555,7 @@ mod tests {
 
     #[test]
     fn parse_full_blink() {
-        let source = std::fs::read_to_string("examples/blink.kv").unwrap();
+        let source = std::fs::read_to_string("examples/blink.kov").unwrap();
         let tokens = Lexer::tokenize(&source).unwrap();
         let prog = Parser::new(tokens).parse().unwrap();
         // import + board + fn + interrupt = 4 items

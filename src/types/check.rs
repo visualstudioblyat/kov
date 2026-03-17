@@ -726,7 +726,7 @@ mod tests {
 
     #[test]
     fn valid_blink() {
-        let source = std::fs::read_to_string("examples/blink.kv").unwrap();
+        let source = std::fs::read_to_string("examples/blink.kov").unwrap();
         if let Err(errors) = check(&source) {
             for e in &errors {
                 eprintln!("  {}", e);

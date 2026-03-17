@@ -650,7 +650,7 @@ mod tests {
 
     #[test]
     fn codegen_blink() {
-        let source = std::fs::read_to_string("examples/blink.kv").unwrap();
+        let source = std::fs::read_to_string("examples/blink.kov").unwrap();
         let tokens = Lexer::tokenize(&source).unwrap();
         let program = Parser::new(tokens).parse().unwrap();
         let ir = Lowering::lower(&program);
@@ -663,7 +663,7 @@ mod tests {
 
         assert!(!code.is_empty());
         println!(
-            "blink.kv compiled to {} bytes of RISC-V machine code",
+            "blink.kov compiled to {} bytes of RISC-V machine code",
             code.len()
         );
         assert_eq!(code.len() % 4, 0);

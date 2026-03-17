@@ -513,7 +513,7 @@ mod tests {
 
     #[test]
     fn run_compiled_blink() {
-        let source = std::fs::read_to_string("examples/blink.kv").unwrap();
+        let source = std::fs::read_to_string("examples/blink.kov").unwrap();
         let tokens = crate::lexer::Lexer::tokenize(&source).unwrap();
         let program = crate::parser::Parser::new(tokens).parse().unwrap();
         let ir = crate::ir::lower::Lowering::lower(&program);

@@ -29,7 +29,7 @@ No single tool does all of this, so I'm building one that does. Mostly for mysel
 The compiler works end-to-end. It compiles Kov source to RISC-V machine code and runs it in a built-in emulator that verifies GPIO register writes.
 
 ```
-$ kov run examples/blink.kv
+$ kov run examples/blink.kov
   compiled: 416 bytes in 0.3ms
   executed: 2000 cycles in 0.2ms
   io:       215 writes
@@ -44,10 +44,10 @@ $ kov run examples/blink.kv
 
 ```
 cargo build
-cargo run -- run examples/blink.kv
-cargo run -- run examples/counter.kv
-cargo run -- run examples/pattern.kv
-cargo run -- build examples/blink.kv -o firmware.elf
+cargo run -- run examples/blink.kov
+cargo run -- run examples/counter.kov
+cargo run -- run examples/pattern.kov
+cargo run -- build examples/blink.kov -o firmware.elf
 cargo test
 ```
 

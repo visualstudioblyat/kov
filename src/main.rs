@@ -27,20 +27,20 @@ fn main() {
     if args.len() < 2 {
         eprintln!("usage: kov <command> [args]");
         eprintln!();
-        eprintln!("  build <file.kv> [-o output]   compile to binary");
-        eprintln!("  run <file.kv> [-c cycles]     compile and execute");
-        eprintln!("  asm <file.kv>                 show generated assembly");
-        eprintln!("  trace <file.kv> [-c cycles]   compile, execute, output JSON trace");
-        eprintln!("  wcet <file.kv>                worst-case execution time analysis");
-        eprintln!("  flash <file.kv> [--chip X]    compile and flash to hardware");
-        eprintln!("  test <file.kv>                run #[test] functions");
+        eprintln!("  build <file.kov> [-o output]   compile to binary");
+        eprintln!("  run <file.kov> [-c cycles]     compile and execute");
+        eprintln!("  asm <file.kov>                 show generated assembly");
+        eprintln!("  trace <file.kov> [-c cycles]   compile, execute, output JSON trace");
+        eprintln!("  wcet <file.kov>                worst-case execution time analysis");
+        eprintln!("  flash <file.kov> [--chip X]    compile and flash to hardware");
+        eprintln!("  test <file.kov>                run #[test] functions");
         eprintln!("  init <name> [--board X]       create new project");
         eprintln!("  add <package> [--git URL]     add a dependency");
         eprintln!("  boards                        list supported boards");
         eprintln!("  svd <file.svd> [--name X]     generate board def from SVD");
-        eprintln!("  check <file.kv>               type check only");
+        eprintln!("  check <file.kov>               type check only");
         eprintln!("  lsp                           start language server");
-        eprintln!("  lex <file.kv>                 dump tokens");
+        eprintln!("  lex <file.kov>                 dump tokens");
         eprintln!();
         eprintln!("flags:");
         eprintln!("  --error-format=json           output errors as JSON");
@@ -93,7 +93,7 @@ fn main() {
         }
         "test" => {
             if args.len() < 3 {
-                eprintln!("usage: kov test <file.kv>");
+                eprintln!("usage: kov test <file.kov>");
                 process::exit(1);
             }
             let source = read_file(&args[2]);
@@ -363,7 +363,7 @@ fn compile(source: &str) -> CompileResult {
 
 fn cmd_lex(args: &[String]) {
     if args.len() < 3 {
-        eprintln!("usage: kov lex <file.kv>");
+        eprintln!("usage: kov lex <file.kov>");
         process::exit(1);
     }
     let source = read_file(&args[2]);
@@ -380,12 +380,12 @@ fn cmd_lex(args: &[String]) {
 
 fn cmd_build(args: &[String]) {
     if args.len() < 3 {
-        eprintln!("usage: kov build <file.kv> [-o output]");
+        eprintln!("usage: kov build <file.kov> [-o output]");
         process::exit(1);
     }
 
     let input = &args[2];
-    let output = find_flag(args, "-o").unwrap_or_else(|| input.replace(".kv", ".bin"));
+    let output = find_flag(args, "-o").unwrap_or_else(|| input.replace(".kov", ".bin"));
     let source = read_file(input);
     let result = compile(&source);
 
@@ -415,7 +415,7 @@ fn cmd_build(args: &[String]) {
 
 fn cmd_run(args: &[String]) {
     if args.len() < 3 {
-        eprintln!("usage: kov run <file.kv> [-c cycles]");
+        eprintln!("usage: kov run <file.kov> [-c cycles]");
         process::exit(1);
     }
 
@@ -494,7 +494,7 @@ fn cmd_run(args: &[String]) {
 
 fn cmd_asm(args: &[String]) {
     if args.len() < 3 {
-        eprintln!("usage: kov asm <file.kv>");
+        eprintln!("usage: kov asm <file.kov>");
         process::exit(1);
     }
     let source = read_file(&args[2]);
@@ -507,7 +507,7 @@ fn cmd_asm(args: &[String]) {
 
 fn cmd_trace(args: &[String]) {
     if args.len() < 3 {
-        eprintln!("usage: kov trace <file.kv> [-c cycles]");
+        eprintln!("usage: kov trace <file.kov> [-c cycles]");
         process::exit(1);
     }
 
@@ -531,7 +531,7 @@ fn cmd_trace(args: &[String]) {
 
 fn cmd_wcet(args: &[String]) {
     if args.len() < 3 {
-        eprintln!("usage: kov wcet <file.kv>");
+        eprintln!("usage: kov wcet <file.kov>");
         process::exit(1);
     }
 
@@ -569,7 +569,7 @@ fn cmd_wcet(args: &[String]) {
 
 fn cmd_flash(args: &[String]) {
     if args.len() < 3 {
-        eprintln!("usage: kov flash <file.kv> [--chip <name>]");
+        eprintln!("usage: kov flash <file.kov> [--chip <name>]");
         process::exit(1);
     }
 
@@ -590,7 +590,7 @@ fn cmd_flash(args: &[String]) {
     });
 
     // write temporary ELF
-    let elf_path = format!("{}.elf", input.trim_end_matches(".kv"));
+    let elf_path = format!("{}.elf", input.trim_end_matches(".kov"));
     let elf = codegen::elf::ElfWriter::new(result.flash_base, result.flash_base)
         .write(&result.compressed);
     if let Err(e) = std::fs::write(&elf_path, &elf) {
@@ -634,7 +634,7 @@ fn cmd_flash(args: &[String]) {
 
 fn cmd_check(args: &[String]) {
     if args.len() < 3 {
-        eprintln!("usage: kov check <file.kv>");
+        eprintln!("usage: kov check <file.kov>");
         process::exit(1);
     }
 
