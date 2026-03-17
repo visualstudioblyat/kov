@@ -1,4 +1,5 @@
 pub mod check;
+pub mod dma;
 pub mod interrupt;
 
 use crate::lexer::token::Span;
