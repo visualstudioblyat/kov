@@ -114,6 +114,132 @@ fn main() {
             eprintln!("  nrf52840    Nordic nRF52840 (ARM Cortex-M4F, 256KB RAM, 64MHz)");
             eprintln!("  rp2040      Raspberry Pi Pico (ARM Cortex-M0+, 264KB RAM, 133MHz)");
         }
+        "wcet-elf" => {
+            if args.len() < 3 {
+                eprintln!("usage: kov wcet-elf <firmware.elf>");
+                process::exit(1);
+            }
+            let data = std::fs::read(&args[2]).unwrap_or_else(|e| die(&format!("{e}")));
+            if data.len() < 84 || &data[0..4] != b"\x7fELF" {
+                die("not a valid ELF file");
+            }
+            // parse ELF: find .text section
+            let entry = u32::from_le_bytes([data[24], data[25], data[26], data[27]]);
+            let phoff = u32::from_le_bytes([data[28], data[29], data[30], data[31]]) as usize;
+            let phnum = u16::from_le_bytes([data[44], data[45]]) as usize;
+
+            // find PT_LOAD segment with execute permission
+            let mut text_offset = 0usize;
+            let mut text_vaddr = 0u32;
+            let mut text_size = 0usize;
+            for i in 0..phnum {
+                let off = phoff + i * 32;
+                if off + 32 > data.len() {
+                    break;
+                }
+                let p_type =
+                    u32::from_le_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]]);
+                let p_offset = u32::from_le_bytes([
+                    data[off + 4],
+                    data[off + 5],
+                    data[off + 6],
+                    data[off + 7],
+                ]) as usize;
+                let p_vaddr = u32::from_le_bytes([
+                    data[off + 8],
+                    data[off + 9],
+                    data[off + 10],
+                    data[off + 11],
+                ]);
+                let p_filesz = u32::from_le_bytes([
+                    data[off + 16],
+                    data[off + 17],
+                    data[off + 18],
+                    data[off + 19],
+                ]) as usize;
+                let p_flags = u32::from_le_bytes([
+                    data[off + 24],
+                    data[off + 25],
+                    data[off + 26],
+                    data[off + 27],
+                ]);
+                if p_type == 1 && (p_flags & 1) != 0 {
+                    // PT_LOAD + PF_X
+                    text_offset = p_offset;
+                    text_vaddr = p_vaddr;
+                    text_size = p_filesz;
+                }
+            }
+
+            if text_size == 0 {
+                die("no executable segment found");
+            }
+
+            let code = &data[text_offset..text_offset + text_size];
+            eprintln!("  file:    {}", args[2]);
+            eprintln!("  entry:   {:#010X}", entry);
+            eprintln!("  .text:   {} bytes at {:#010X}", text_size, text_vaddr);
+            eprintln!();
+
+            // per-function WCET: scan for function prologues (addi sp, sp, -N)
+            let mut funcs: Vec<(u32, usize)> = Vec::new(); // (addr, offset)
+            for i in (0..code.len().saturating_sub(3)).step_by(2) {
+                if i + 3 >= code.len() {
+                    break;
+                }
+                let inst = u32::from_le_bytes([code[i], code[i + 1], code[i + 2], code[i + 3]]);
+                let opcode = inst & 0x7F;
+                let rd = (inst >> 7) & 0x1F;
+                let f3 = (inst >> 12) & 7;
+                let rs1 = (inst >> 15) & 0x1F;
+                let imm = (inst as i32) >> 20;
+                if opcode == 0x13 && f3 == 0 && rd == 2 && rs1 == 2 && imm < 0 {
+                    funcs.push((text_vaddr + i as u32, i));
+                }
+            }
+
+            // analyze each detected function
+            eprintln!("  detected {} function prologues:", funcs.len());
+            let mut total_cycles = 0u32;
+            for (j, &(addr, start)) in funcs.iter().enumerate() {
+                let end = if j + 1 < funcs.len() {
+                    funcs[j + 1].1
+                } else {
+                    code.len()
+                };
+                if start >= end {
+                    continue;
+                }
+                let func_code = &code[start..end];
+                let mut cycles = 0u32;
+                let mut k = 0;
+                while k + 3 < func_code.len() {
+                    let inst = u32::from_le_bytes([
+                        func_code[k],
+                        func_code[k + 1],
+                        func_code[k + 2],
+                        func_code[k + 3],
+                    ]);
+                    cycles += estimate_cycles(inst);
+                    k += 4;
+                }
+                let stack = estimate_stack(func_code);
+                eprintln!(
+                    "    {:#010X}: ~{} cycles, {} bytes stack, {} instructions",
+                    addr,
+                    cycles,
+                    stack,
+                    func_code.len() / 4
+                );
+                total_cycles += cycles;
+            }
+            eprintln!();
+            eprintln!(
+                "  total: ~{} cycles worst-case across {} functions",
+                total_cycles,
+                funcs.len()
+            );
+        }
         "svd" => {
             if args.len() < 3 {
                 eprintln!("usage: kov svd <file.svd> [--name <board>]");
@@ -721,6 +847,42 @@ fn read_file(path: &str) -> String {
 
 fn find_flag(args: &[String], flag: &str) -> Option<String> {
     args.windows(2).find(|w| w[0] == flag).map(|w| w[1].clone())
+}
+
+fn estimate_cycles(inst: u32) -> u32 {
+    let opcode = inst & 0x7F;
+    let f3 = (inst >> 12) & 7;
+    let f7 = inst >> 25;
+    match opcode {
+        0x37 | 0x17 => 1, // LUI, AUIPC
+        0x6F | 0x67 => 1, // JAL, JALR
+        0x63 => 1,        // branches
+        0x03 => 2,        // loads
+        0x23 => 2,        // stores
+        0x13 => 1,        // immediate ALU
+        0x33 => match (f3, f7) {
+            (0, 0x01) => 5,              // MUL
+            (4, 0x01) | (5, 0x01) => 33, // DIV, DIVU
+            (6, 0x01) | (7, 0x01) => 33, // REM, REMU
+            _ => 1,
+        },
+        0x73 => 1, // SYSTEM
+        _ => 1,
+    }
+}
+
+fn estimate_stack(code: &[u8]) -> u32 {
+    if code.len() < 4 {
+        return 0;
+    }
+    let first = u32::from_le_bytes([code[0], code[1], code[2], code[3]]);
+    // addi sp, sp, -N: opcode=0x13, rd=sp(2), rs1=sp(2), funct3=0
+    if first & 0x000FFFFF == 0x00010113 {
+        let imm = (first as i32) >> 20;
+        (-imm) as u32
+    } else {
+        0
+    }
 }
 
 fn die(msg: &str) -> ! {
