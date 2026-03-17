@@ -30,6 +30,7 @@ fn main() {
         eprintln!("  wcet <file.kv>                worst-case execution time analysis");
         eprintln!("  flash <file.kv> [--chip X]    compile and flash to hardware");
         eprintln!("  boards                        list supported boards");
+        eprintln!("  svd <file.svd> [--name X]     generate board def from SVD");
         eprintln!("  check <file.kv>               type check only");
         eprintln!("  lex <file.kv>                 dump tokens");
         eprintln!();
@@ -55,6 +56,16 @@ fn main() {
             eprintln!("  stm32f4     STM32F4 (ARM Cortex-M4, 128KB RAM, 168MHz)");
             eprintln!("  nrf52840    Nordic nRF52840 (ARM Cortex-M4F, 256KB RAM, 64MHz)");
             eprintln!("  rp2040      Raspberry Pi Pico (ARM Cortex-M0+, 264KB RAM, 133MHz)");
+        }
+        "svd" => {
+            if args.len() < 3 {
+                eprintln!("usage: kov svd <file.svd> [--name <board>]");
+                process::exit(1);
+            }
+            let xml = read_file(&args[2]);
+            let name = find_flag(&args, "--name").unwrap_or_else(|| "myboard".into());
+            let peripherals = codegen::svd::parse_svd(&xml);
+            println!("{}", codegen::svd::generate_kov(&peripherals, &name));
         }
         "check" => cmd_check(&args),
         _ => {

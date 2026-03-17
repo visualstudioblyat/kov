@@ -7,6 +7,7 @@ pub mod encode;
 pub mod mmio;
 pub mod stack;
 pub mod startup;
+pub mod svd;
 pub mod wcet;
 
 use crate::ir::globals::GlobalTable;
