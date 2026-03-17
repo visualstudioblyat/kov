@@ -135,6 +135,16 @@ impl Parser {
         let name = match self.peek() {
             TokenKind::Board => "board",
             TokenKind::Type => "type",
+            TokenKind::In => "in",
+            TokenKind::For => "for",
+            TokenKind::Fn => "fn",
+            TokenKind::Const => "const",
+            TokenKind::Static => "static",
+            TokenKind::Struct => "struct",
+            TokenKind::Enum => "enum",
+            TokenKind::Trait => "trait",
+            TokenKind::Impl => "impl",
+            TokenKind::Extern => "extern",
             _ => return Err(self.error(format!("expected identifier, got {:?}", self.peek()))),
         };
         self.advance();
@@ -848,6 +858,44 @@ impl Parser {
             TokenKind::For => self.parse_for(),
             TokenKind::Match => self.parse_match(),
             TokenKind::Static => self.parse_static_stmt(),
+            TokenKind::Ident(name) if name == "asm" => {
+                let start = self.span();
+                self.advance(); // asm
+                self.expect(&TokenKind::Bang)?;
+                self.expect(&TokenKind::LParen)?;
+                // first arg is the template string
+                let template = match self.peek().clone() {
+                    TokenKind::StringLit(s) => {
+                        self.advance();
+                        s
+                    }
+                    _ => return Err(self.error("expected string template for asm!".into())),
+                };
+                let mut operands = Vec::new();
+                while self.eat(&TokenKind::Comma) {
+                    if matches!(self.peek(), TokenKind::RParen) {
+                        break;
+                    }
+                    // parse: constraint(reg) expr
+                    let constraint = self.expect_ident_or_keyword()?;
+                    self.expect(&TokenKind::LParen)?;
+                    let reg = self.expect_ident_or_keyword()?;
+                    self.expect(&TokenKind::RParen)?;
+                    let expr = self.parse_expr()?;
+                    operands.push(AsmOperand {
+                        constraint,
+                        reg,
+                        expr,
+                    });
+                }
+                self.expect(&TokenKind::RParen)?;
+                self.expect(&TokenKind::Semicolon)?;
+                Ok(Stmt::InlineAsm {
+                    template,
+                    operands,
+                    span: start,
+                })
+            }
             _ => {
                 let expr = self.parse_expr()?;
                 // check for assignment
@@ -1621,6 +1669,34 @@ mod tests {
                 assert_eq!(i.methods.len(), 1);
             }
             _ => panic!("expected impl"),
+        }
+    }
+
+    #[test]
+    fn parse_inline_asm() {
+        let prog = parse("fn f() { asm!(\"nop\"); }");
+        match &prog.items[0] {
+            TopItem::Function(f) => match &f.body.stmts[0] {
+                Stmt::InlineAsm { template, .. } => assert_eq!(template, "nop"),
+                _ => panic!("expected asm"),
+            },
+            _ => panic!("expected function"),
+        }
+    }
+
+    #[test]
+    fn parse_asm_with_operands() {
+        let prog = parse("fn f(x: u32) { asm!(\"csrw mstatus, {0}\", in(reg) x); }");
+        match &prog.items[0] {
+            TopItem::Function(f) => match &f.body.stmts[0] {
+                Stmt::InlineAsm { operands, .. } => {
+                    assert_eq!(operands.len(), 1);
+                    assert_eq!(operands[0].constraint, "in");
+                    assert_eq!(operands[0].reg, "reg");
+                }
+                _ => panic!("expected asm"),
+            },
+            _ => panic!("expected function"),
         }
     }
 }

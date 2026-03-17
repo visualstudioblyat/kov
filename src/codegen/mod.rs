@@ -492,6 +492,28 @@ impl CodeGen {
                 }
             }
 
+            Op::InlineAsm(template, _operands) => {
+                // basic inline asm: encode known instructions
+                match template.trim() {
+                    "nop" => self.emitter.emit32(nop()),
+                    "wfi" => self.emitter.emit32(wfi()),
+                    "ebreak" => self.emitter.emit32(ebreak()),
+                    "fence" => self.emitter.emit32(0x0000000F),
+                    _ => {
+                        // try to parse as hex literal: "0xNNNNNNNN"
+                        if let Some(hex) = template.trim().strip_prefix("0x") {
+                            if let Ok(inst) = u32::from_str_radix(hex, 16) {
+                                self.emitter.emit32(inst);
+                            } else {
+                                self.emitter.emit32(nop()); // fallback
+                            }
+                        } else {
+                            self.emitter.emit32(nop()); // unknown template
+                        }
+                    }
+                }
+            }
+
             Op::Nop => {}
 
             _ => {} // ConstI64 etc — TODO

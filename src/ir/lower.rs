@@ -733,6 +733,16 @@ impl<'a> FnBuilder<'a> {
                 self.current_block = merge_bb;
             }
 
+            Stmt::InlineAsm {
+                template, operands, ..
+            } => {
+                let vals: Vec<Value> = operands
+                    .iter()
+                    .map(|op| self.lower_expr(&op.expr))
+                    .collect();
+                self.emit(Op::InlineAsm(template.clone(), vals), IrType::Void);
+            }
+
             _ => {} // defer, critical_section — TODO
         }
     }

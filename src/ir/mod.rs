@@ -104,6 +104,9 @@ pub enum Op {
     // get address of global/static
     GlobalAddr(String),
 
+    // inline assembly — raw instruction template
+    InlineAsm(String, Vec<Value>),
+
     // no-op (used for void expressions)
     Nop,
 }

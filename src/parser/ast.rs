@@ -165,6 +165,13 @@ pub struct Attribute {
 }
 
 #[derive(Debug, Clone)]
+pub struct AsmOperand {
+    pub constraint: String, // "in", "out", "inout"
+    pub reg: String,        // "reg" or specific register
+    pub expr: Expr,
+}
+
+#[derive(Debug, Clone)]
 pub struct Param {
     pub name: String,
     pub ty: Type,
@@ -248,6 +255,11 @@ pub enum Stmt {
     Break(Option<String>, Span),
     Continue(Option<String>, Span),
     Defer(Box<Stmt>, Span),
+    InlineAsm {
+        template: String,
+        operands: Vec<AsmOperand>,
+        span: Span,
+    },
     If {
         condition: Expr,
         then_block: Block,
