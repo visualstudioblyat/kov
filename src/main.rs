@@ -274,6 +274,7 @@ struct CompileResult {
     code: Vec<u8>,
     compressed: Vec<u8>,
     labels: std::collections::HashMap<String, usize>,
+    data_section: Vec<u8>,
     flash_base: u32,
     ram_base: u32,
     ram_top: u32,
@@ -490,11 +491,13 @@ fn compile(source: &str) -> CompileResult {
         Err(e) => die(&format!("codegen error: {e}")),
     };
     let compressed = codegen::compress::compress(&code);
+    let data_section = ir_result.globals.emit_data();
 
     CompileResult {
         code,
         compressed,
         labels,
+        data_section,
         flash_base: board_config
             .as_ref()
             .map(|b| b.flash_start)
@@ -682,6 +685,10 @@ fn cmd_run(args: &[String]) {
     let mut cpu = emu::Cpu::with_memory(result.flash_base, result.flash_base, result.ram_base);
     cpu.mem.load_flash(&result.code);
     cpu.regs[2] = result.ram_top;
+    // load .data section (strings, initialized globals) into RAM
+    for (i, &byte) in result.data_section.iter().enumerate() {
+        cpu.mem.write8(result.ram_base + i as u32, byte);
+    }
 
     let exec_start = Instant::now();
     cpu.run(max_cycles);

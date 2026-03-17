@@ -1,0 +1,41 @@
+// read a file and print it to stdout via VFS
+// VFS_OPEN  = 0xF000_0000 (write path ptr, read fd)
+// VFS_READ  = 0xF000_0004 (write fd, read byte)
+// VFS_STDOUT = 0xF000_0014 (write byte)
+
+fn vfs_open(path_ptr: u32) u32 {
+    write_mmio(4026531840, path_ptr);
+    return read_mmio(4026531840);
+}
+
+fn vfs_read(fd: u32) u32 {
+    write_mmio(4026531844, fd);
+    return read_mmio(4026531844);
+}
+
+fn putchar(c: u32) {
+    write_mmio(4026531860, c);
+}
+
+fn print_file(fd: u32) {
+    loop {
+        let byte = vfs_read(fd);
+        if byte == 4294967295 { break; }
+        putchar(byte);
+    }
+}
+
+fn main() {
+    // path to file stored in memory - for now just print hello
+    putchar(114); // r
+    putchar(101); // e
+    putchar(97);  // a
+    putchar(100); // d
+    putchar(105); // i
+    putchar(110); // n
+    putchar(103); // g
+    putchar(46);  // .
+    putchar(46);  // .
+    putchar(46);  // .
+    putchar(10);  // \n
+}

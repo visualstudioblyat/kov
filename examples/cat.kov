@@ -1,0 +1,35 @@
+// cat: read a file and print it to stdout
+// demonstrates VFS file I/O from Kov
+
+fn vfs_open(path_ptr: u32) u32 {
+    write_mmio(4026531840, path_ptr);
+    return read_mmio(4026531840);
+}
+
+fn vfs_read_byte(fd: u32) u32 {
+    write_mmio(4026531844, fd);
+    return read_mmio(4026531844);
+}
+
+fn putchar(c: u32) {
+    write_mmio(4026531860, c);
+}
+
+fn print_file(fd: u32) {
+    loop {
+        let byte = vfs_read_byte(fd);
+        if byte == 4294967295 { break; }
+        putchar(byte);
+    }
+}
+
+fn main() {
+    let path = "examples/hello_vfs.kov";
+    let fd = vfs_open(path as u32);
+    if fd > 0 {
+        print_file(fd);
+    } else {
+        putchar(63); // '?'
+        putchar(10);
+    }
+}
