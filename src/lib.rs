@@ -27,6 +27,7 @@ pub struct CompileOutput {
     pub diagnostics: Vec<Diagnostic>,
 }
 
+#[derive(Debug)]
 pub struct Diagnostic {
     pub severity: String,
     pub message: String,
