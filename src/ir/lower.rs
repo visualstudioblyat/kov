@@ -59,6 +59,7 @@ struct FnBuilder<'a> {
     periph_map: &'a PeripheralMap,
     globals: &'a super::globals::GlobalTable,
     struct_layouts: &'a HashMap<String, StructLayout>,
+    enum_variants: &'a HashMap<String, (String, u32, Vec<IrType>)>,
     loop_stack: Vec<(Option<String>, Block, Block)>, // (label, header/continue_target, exit_block)
 }
 
@@ -70,11 +71,23 @@ impl Lowering {
         let mut functions = Vec::new();
         let mut globals = GlobalTable::new();
         let mut struct_layouts = HashMap::new();
+        // variant_name → (enum_name, tag_index, field_types)
+        let mut enum_variants: HashMap<String, (String, u32, Vec<IrType>)> = HashMap::new();
 
-        // first pass: collect structs and globals
+        // first pass: collect structs, enums, and globals
         for item in &program.items {
             if let TopItem::Struct(s) = item {
                 struct_layouts.insert(s.name.clone(), StructLayout::from_def(s));
+            }
+            if let TopItem::Enum(e) = item {
+                for (i, v) in e.variants.iter().enumerate() {
+                    let field_tys: Vec<IrType> = v
+                        .fields
+                        .iter()
+                        .map(|t| ast_type_to_ir(&Some(t.clone())))
+                        .collect();
+                    enum_variants.insert(v.name.clone(), (e.name.clone(), i as u32, field_tys));
+                }
             }
         }
         for item in &program.items {
@@ -105,7 +118,13 @@ impl Lowering {
             match item {
                 TopItem::Function(f) => {
                     collect_body_statics(&f.body, &mut globals);
-                    functions.push(lower_fn(f, &periph_map, &globals, &struct_layouts));
+                    functions.push(lower_fn(
+                        f,
+                        &periph_map,
+                        &globals,
+                        &struct_layouts,
+                        &enum_variants,
+                    ));
                 }
                 TopItem::Impl(imp) => {
                     for method in &imp.methods {
@@ -113,7 +132,13 @@ impl Lowering {
                         let mut mangled = method.clone();
                         mangled.name = format!("{}_{}", imp.target_type, method.name);
                         collect_body_statics(&mangled.body, &mut globals);
-                        functions.push(lower_fn(&mangled, &periph_map, &globals, &struct_layouts));
+                        functions.push(lower_fn(
+                            &mangled,
+                            &periph_map,
+                            &globals,
+                            &struct_layouts,
+                            &enum_variants,
+                        ));
                     }
                 }
                 TopItem::Interrupt(i) => {
@@ -128,7 +153,13 @@ impl Lowering {
                         body: i.body.clone(),
                         span: i.span,
                     };
-                    functions.push(lower_fn(&fake_fn, &periph_map, &globals, &struct_layouts));
+                    functions.push(lower_fn(
+                        &fake_fn,
+                        &periph_map,
+                        &globals,
+                        &struct_layouts,
+                        &enum_variants,
+                    ));
                 }
                 _ => {}
             }
@@ -252,6 +283,7 @@ fn lower_fn(
     periph_map: &PeripheralMap,
     globals: &super::globals::GlobalTable,
     struct_layouts: &HashMap<String, StructLayout>,
+    enum_variants: &HashMap<String, (String, u32, Vec<IrType>)>,
 ) -> Function {
     let params: Vec<(String, IrType)> = f
         .params
@@ -290,6 +322,7 @@ fn lower_fn(
         periph_map,
         globals,
         struct_layouts,
+        enum_variants,
         loop_stack: Vec::new(),
     };
 
@@ -709,12 +742,53 @@ impl<'a> FnBuilder<'a> {
                                 Terminator::Jump(body_bb, vec![]),
                             );
                         }
-                        ast::Pattern::Variant(_, _) => {
-                            // TODO: enum variant matching
-                            self.func.set_terminator(
-                                self.current_block,
-                                Terminator::Jump(body_bb, vec![]),
-                            );
+                        ast::Pattern::Variant(name, bindings) => {
+                            if let Some((_, tag, _)) = self.enum_variants.get(name) {
+                                // load tag from scrutinee (first 4 bytes)
+                                let tag_loaded =
+                                    self.emit(Op::Load(scrutinee, IrType::I32), IrType::I32);
+                                let tag_expected =
+                                    self.emit(Op::ConstI32(*tag as i32), IrType::I32);
+                                let cond =
+                                    self.emit(Op::Eq(tag_loaded, tag_expected), IrType::Bool);
+                                self.func.set_terminator(
+                                    self.current_block,
+                                    Terminator::BranchIf {
+                                        cond,
+                                        then_block: body_bb,
+                                        then_args: vec![],
+                                        else_block: next,
+                                        else_args: vec![],
+                                    },
+                                );
+                                // bind variant fields in the body block
+                                self.current_block = body_bb;
+                                for (i, binding_name) in bindings.iter().enumerate() {
+                                    let off =
+                                        self.emit(Op::ConstI32((4 + i * 4) as i32), IrType::I32);
+                                    let addr = self.emit(Op::Add(scrutinee, off), IrType::Ptr);
+                                    let val = self.emit(Op::Load(addr, IrType::I32), IrType::I32);
+                                    self.vars.insert(binding_name.clone(), val);
+                                }
+                                // DON'T set current_block to body_bb again below
+                                self.lower_expr(&arm.body);
+                                if matches!(
+                                    self.func.blocks[self.current_block.0 as usize].terminator,
+                                    Terminator::None
+                                ) {
+                                    self.func.set_terminator(
+                                        self.current_block,
+                                        Terminator::Jump(merge_bb, vec![]),
+                                    );
+                                }
+                                self.current_block = merge_bb;
+                                continue; // skip the default body block handling below
+                            } else {
+                                self.func.set_terminator(
+                                    self.current_block,
+                                    Terminator::Jump(body_bb, vec![]),
+                                );
+                            }
                         }
                     }
 
@@ -811,13 +885,29 @@ impl<'a> FnBuilder<'a> {
 
             // method calls and function calls → Call op
             Expr::Call(callee, args, _) => {
-                let arg_vals: Vec<Value> = args.iter().map(|a| self.lower_expr(a)).collect();
                 if let Expr::Ident(name, _) = callee.as_ref() {
+                    // check if this is an enum variant constructor
+                    if let Some((_enum_name, tag, _field_tys)) = self.enum_variants.get(name) {
+                        // allocate stack: tag (4 bytes) + fields (4 bytes each)
+                        let total = 4 + (args.len() as u32 * 4);
+                        let base = self.emit(Op::StackAlloc(total), IrType::Ptr);
+                        // store tag
+                        let tag_val = self.emit(Op::ConstI32(*tag as i32), IrType::I32);
+                        self.emit(Op::Store(base, tag_val), IrType::Void);
+                        // store fields
+                        for (i, arg) in args.iter().enumerate() {
+                            let val = self.lower_expr(arg);
+                            let off = self.emit(Op::ConstI32((4 + i * 4) as i32), IrType::I32);
+                            let addr = self.emit(Op::Add(base, off), IrType::Ptr);
+                            self.emit(Op::Store(addr, val), IrType::Void);
+                        }
+                        return base;
+                    }
+                    let arg_vals: Vec<Value> = args.iter().map(|a| self.lower_expr(a)).collect();
                     self.emit(Op::Call(name.clone(), arg_vals), IrType::I32)
                 } else {
-                    // indirect call — lower callee as value
                     let _callee_val = self.lower_expr(callee);
-                    self.emit(Op::Nop, IrType::Void) // TODO: indirect calls
+                    self.emit(Op::Nop, IrType::Void)
                 }
             }
 
@@ -1329,5 +1419,40 @@ mod tests {
                 .any(|i| matches!(&i.op, Op::Call(n, _) if n == "Counter_inc"))
         });
         assert!(has_call, "c.inc() should resolve to Counter_inc");
+    }
+
+    #[test]
+    fn lower_enum_variant_construction() {
+        let ir = lower(
+            "enum Option { None, Some(u32) }
+             fn f() u32 { let x = Some(42); return 0; }",
+        );
+        let func = &ir.functions[0];
+        // should have StackAlloc for the tagged union
+        let has_alloc = func
+            .blocks
+            .iter()
+            .any(|b| b.insts.iter().any(|i| matches!(&i.op, Op::StackAlloc(_))));
+        assert!(has_alloc, "enum variant construction needs StackAlloc");
+    }
+
+    #[test]
+    fn lower_enum_match_with_binding() {
+        let ir = lower(
+            "enum Result { Ok(u32), Err(u32) }
+             fn f(r: u32) u32 { match r { Ok(val) => val, Err(e) => e, _ => 0, } }",
+        );
+        let func = &ir.functions[0];
+        // should have Load ops for extracting variant fields
+        let load_count = func
+            .blocks
+            .iter()
+            .flat_map(|b| b.insts.iter())
+            .filter(|i| matches!(&i.op, Op::Load(_, _)))
+            .count();
+        assert!(
+            load_count >= 2,
+            "variant matching should load tag and field"
+        );
     }
 }
