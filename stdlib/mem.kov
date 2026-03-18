@@ -1,0 +1,21 @@
+// core::mem — memory operations
+
+fn memset(dst: u32, val: u32, len: u32) {
+    for i in 0..len {
+        write_byte(dst + i, val);
+    }
+}
+
+fn memcmp(a: u32, b: u32, len: u32) u32 {
+    for i in 0..len {
+        let ca = read_byte(a + i);
+        let cb = read_byte(b + i);
+        if ca != cb {
+            if ca < cb {
+                return 0;
+            }
+            return 2;
+        }
+    }
+    return 1;
+}

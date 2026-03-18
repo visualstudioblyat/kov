@@ -1,28 +1,54 @@
-// core::flatmap — sorted array lookup, O(n) insert, O(log n) find
-// no heap, fixed capacity
+// core::flatmap — linear key-value store, O(n) lookup
+// layout: keys array (u32 ptr), values array (u32 ptr), len (u32), cap (u32)
+// header = [keys_ptr, vals_ptr, 0, cap]
 
-struct FlatMap {
-    keys: u32,    // pointer to key array
-    values: u32,  // pointer to value array
-    len: u32,
-    cap: u32,
+fn map_insert(m: u32, key: u32, value: u32) {
+    let keys = read_word(m);
+    let vals = read_word(m + 4);
+    let len = read_word(m + 8);
+    let cap = read_word(m + 12);
+
+    // check if key already exists, update in place
+    for i in 0..len {
+        if read_word(keys + i * 4) == key {
+            write_word(vals + i * 4, value);
+            return;
+        }
+    }
+
+    // append if room
+    if len < cap {
+        write_word(keys + len * 4, key);
+        write_word(vals + len * 4, value);
+        write_word(m + 8, len + 1);
+    }
 }
 
-impl FlatMap {
-    fn insert(self_ptr: u32, key: u32, value: u32) {
-        // linear insert at correct sorted position
-    }
+fn map_get(m: u32, key: u32) u32 {
+    let keys = read_word(m);
+    let vals = read_word(m + 4);
+    let len = read_word(m + 8);
 
-    fn get(self_ptr: u32, key: u32) u32 {
-        // binary search
-        return 0;
+    for i in 0..len {
+        if read_word(keys + i * 4) == key {
+            return read_word(vals + i * 4);
+        }
     }
+    return 0;
+}
 
-    fn contains(self_ptr: u32, key: u32) bool {
-        return false;
-    }
+fn map_contains(m: u32, key: u32) u32 {
+    let keys = read_word(m);
+    let len = read_word(m + 8);
 
-    fn length(self_ptr: u32) u32 {
-        return 0;
+    for i in 0..len {
+        if read_word(keys + i * 4) == key {
+            return 1;
+        }
     }
+    return 0;
+}
+
+fn map_len(m: u32) u32 {
+    return read_word(m + 8);
 }

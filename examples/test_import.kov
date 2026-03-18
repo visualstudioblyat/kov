@@ -1,0 +1,7 @@
+import io;
+
+fn main() {
+    println("hello from imported io!" as u32);
+    print_num(42);
+    putchar(10);
+}

@@ -1,0 +1,53 @@
+// core::fs — file system operations via VFS MMIO
+
+fn fs_open(path_ptr: u32) u32 {
+    write_mmio(4026531840, path_ptr);
+    return read_mmio(4026531840);
+}
+
+fn fs_create(path_ptr: u32) u32 {
+    write_mmio(4026531868, path_ptr);
+    return read_mmio(4026531868);
+}
+
+fn fs_read_byte(fd: u32) u32 {
+    write_mmio(4026531844, fd);
+    return read_mmio(4026531844);
+}
+
+fn fs_write_byte(fd: u32, byte: u32) {
+    let val = fd * 256 + byte;
+    write_mmio(4026531848, val);
+}
+
+fn fs_write(fd: u32, ptr: u32, len: u32) {
+    for i in 0..len {
+        let byte = read_byte(ptr + i);
+        fs_write_byte(fd, byte);
+    }
+}
+
+fn fs_write_str(fd: u32, ptr: u32) {
+    let len = strlen(ptr);
+    fs_write(fd, ptr, len);
+}
+
+fn fs_close(fd: u32) {
+    write_mmio(4026531852, fd);
+}
+
+fn fs_flush(fd: u32) u32 {
+    write_mmio(4026531872, fd);
+    return read_mmio(4026531872);
+}
+
+fn fs_read_all(fd: u32, buf: u32, max_len: u32) u32 {
+    for i in 0..max_len {
+        let byte = fs_read_byte(fd);
+        if byte == 4294967295 {
+            return i;
+        }
+        write_byte(buf + i, byte);
+    }
+    return max_len;
+}

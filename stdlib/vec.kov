@@ -1,23 +1,44 @@
-// core::vec — fixed-capacity vector
-// no heap allocation, all stack or static
+// core::vec — fixed-capacity vector backed by a u32 array
+// layout: data pointer (u32), len (u32), cap (u32)
+// usage:
+//   let backing = [0, 0, 0, 0, 0, 0, 0, 0];
+//   let v = [backing as u32, 0, 8];  // data=backing, len=0, cap=8
 
-struct Vec32 {
-    data: u32,  // pointer to backing array
-    len: u32,
-    cap: u32,
+fn vec_push(v: u32, item: u32) {
+    let len = read_word(v + 4);
+    let cap = read_word(v + 8);
+    if len < cap {
+        let data = read_word(v);
+        write_word(data + len * 4, item);
+        write_word(v + 4, len + 1);
+    }
 }
 
-impl Vec32 {
-    fn push(v: u32, item: u32) {
-        // v.data[v.len] = item; v.len += 1;
-    }
+fn vec_get(v: u32, index: u32) u32 {
+    let data = read_word(v);
+    return read_word(data + index * 4);
+}
 
-    fn get(v: u32, index: u32) u32 {
-        // return v.data[index];
-        return 0;
-    }
+fn vec_len(v: u32) u32 {
+    return read_word(v + 4);
+}
 
-    fn len(v: u32) u32 {
-        return 0;
+fn vec_set(v: u32, index: u32, item: u32) {
+    let data = read_word(v);
+    write_word(data + index * 4, item);
+}
+
+fn vec_pop(v: u32) u32 {
+    let len = read_word(v + 4);
+    if len > 0 {
+        let new_len = len - 1;
+        write_word(v + 4, new_len);
+        let data = read_word(v);
+        return read_word(data + new_len * 4);
     }
+    return 0;
+}
+
+fn vec_clear(v: u32) {
+    write_word(v + 4, 0);
 }

@@ -1,5 +1,3 @@
-// core::io — console I/O via MMIO
-
 fn putchar(c: u32) {
     write_mmio(4026531860, c);
 }

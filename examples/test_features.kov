@@ -1,0 +1,46 @@
+fn putchar(c: u32) {
+    write_mmio(4026531860, c);
+}
+
+fn print(ptr: u32, len: u32) {
+    for i in 0..len {
+        let byte = read_byte(ptr + i);
+        putchar(byte);
+    }
+}
+
+fn print_num(n: u32) {
+    if n >= 10 {
+        print_num(n / 10);
+    }
+    putchar(48 + n % 10);
+}
+
+fn main() {
+    // test 1: string printing
+    print("hello from kov!" as u32, 15);
+    putchar(10);
+
+    // test 2: else-if chains
+    let x = 2;
+    if x == 1 {
+        print("one" as u32, 3);
+    } else if x == 2 {
+        print("two" as u32, 3);
+    } else {
+        print("other" as u32, 5);
+    }
+    putchar(10);
+
+    // test 3: arrays in loops
+    let arr = [10, 20, 30, 40, 50];
+    for i in 0..5 {
+        print_num(arr[i]);
+        putchar(32);
+    }
+    putchar(10);
+
+    // test 4: nested calls
+    print("done!" as u32, 5);
+    putchar(10);
+}

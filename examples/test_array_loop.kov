@@ -1,0 +1,19 @@
+fn putchar(c: u32) {
+    write_mmio(4026531860, c);
+}
+
+fn print_num(n: u32) {
+    if n >= 10 {
+        print_num(n / 10);
+    }
+    putchar(48 + n % 10);
+}
+
+fn main() {
+    let arr = [10, 20, 30];
+    for i in 0..3 {
+        print_num(arr[i]);
+        putchar(32);
+    }
+    putchar(10);
+}

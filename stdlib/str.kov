@@ -1,19 +1,33 @@
 // core::str — string utilities
 
 fn str_len(ptr: u32) u32 {
-    let i: u32 = 0;
-    // walk until null terminator
-    // (needs byte-level memory access)
-    return i;
+    return strlen(ptr);
 }
 
 fn str_eq(a: u32, b: u32, len: u32) u32 {
-    // compare two byte strings
-    // returns 1 if equal, 0 if not
-    return 0;
+    for i in 0..len {
+        let ca = read_byte(a + i);
+        let cb = read_byte(b + i);
+        if ca != cb {
+            return 0;
+        }
+    }
+    return 1;
 }
 
 fn char_at(ptr: u32, index: u32) u32 {
-    // return byte at ptr + index
-    return 0;
+    return read_byte(ptr + index);
+}
+
+fn str_starts_with(haystack: u32, needle: u32, needle_len: u32) u32 {
+    return str_eq(haystack, needle, needle_len);
+}
+
+fn str_find_char(ptr: u32, len: u32, ch: u32) u32 {
+    for i in 0..len {
+        if read_byte(ptr + i) == ch {
+            return i;
+        }
+    }
+    return len;
 }

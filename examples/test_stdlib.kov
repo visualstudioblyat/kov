@@ -1,0 +1,32 @@
+import io;
+import str;
+import mem;
+
+fn main() {
+    println("=== stdlib test ===" as u32);
+
+    // test str_len
+    let s = "hello world" as u32;
+    print("str_len: " as u32, 9);
+    print_num(str_len(s));
+    putchar(10);
+
+    // test char_at
+    print("char_at(0): " as u32, 12);
+    putchar(char_at(s, 0));
+    putchar(10);
+
+    // test str_eq
+    print("str_eq: " as u32, 8);
+    print_num(str_eq("abc" as u32, "abc" as u32, 3));
+    putchar(10);
+
+    // test memset
+    let buf = [0, 0, 0, 0];
+    memset(buf as u32, 65, 4);
+    print("memset: " as u32, 8);
+    print(buf as u32, 4);
+    putchar(10);
+
+    println("=== done ===" as u32);
+}
