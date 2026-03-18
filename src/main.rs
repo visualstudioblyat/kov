@@ -18,6 +18,8 @@ mod pkg;
 mod testing;
 mod types;
 
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::process;
 use std::time::Instant;
 
@@ -281,7 +283,142 @@ struct CompileResult {
     elapsed: std::time::Duration,
 }
 
+fn resolve_imports(program: &mut parser::ast::Program, base_dir: &Path) {
+    let mut visited = HashSet::new();
+    if let Ok(canon) = base_dir.canonicalize() {
+        // mark the main file's directory as context
+        let _ = canon;
+    }
+    resolve_imports_inner(program, base_dir, &mut visited);
+}
+
+fn resolve_imports_inner(
+    program: &mut parser::ast::Program,
+    base_dir: &Path,
+    visited: &mut HashSet<PathBuf>,
+) {
+    // collect import paths
+    let imports: Vec<Vec<String>> = program
+        .items
+        .iter()
+        .filter_map(|item| {
+            if let parser::ast::TopItem::Import(decl) = item {
+                Some(decl.path.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // find stdlib directory: check relative to source, then relative to executable
+    let stdlib_dirs: Vec<PathBuf> = {
+        let mut dirs = vec![base_dir.join("stdlib")];
+        // walk up from base_dir looking for a stdlib/ directory
+        let mut search = base_dir.to_path_buf();
+        for _ in 0..5 {
+            if search.join("stdlib").is_dir() {
+                dirs.push(search.join("stdlib"));
+                break;
+            }
+            if !search.pop() {
+                break;
+            }
+        }
+        // also check relative to the executable
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(exe_dir) = exe.parent() {
+                dirs.push(exe_dir.join("stdlib"));
+                // for cargo run, check the workspace root
+                if let Some(parent) = exe_dir.parent() {
+                    if let Some(grandparent) = parent.parent() {
+                        dirs.push(grandparent.join("stdlib"));
+                    }
+                }
+            }
+        }
+        dirs
+    };
+
+    for path_segments in imports {
+        // resolve: "import math;" → "./math.kov"
+        // resolve: "import std::io;" → "./std/io.kov" or "./std/io/mod.kov"
+        let relative = path_segments.join("/");
+        let mut candidates = vec![
+            base_dir.join(format!("{}.kov", relative)),
+            base_dir.join(format!("{}/mod.kov", relative)),
+        ];
+        // also search stdlib directories
+        for stdlib_dir in &stdlib_dirs {
+            candidates.push(stdlib_dir.join(format!("{}.kov", relative)));
+            candidates.push(stdlib_dir.join(format!("{}/mod.kov", relative)));
+        }
+        // for single-segment imports, also check stdlib directly
+        if path_segments.len() == 1 {
+            for stdlib_dir in &stdlib_dirs {
+                candidates.push(stdlib_dir.join(format!("{}.kov", path_segments[0])));
+            }
+        }
+
+        let file_path = candidates.iter().find(|p| p.exists());
+        let file_path = match file_path {
+            Some(p) => p.clone(),
+            None => continue, // silently skip unresolved imports for now
+        };
+
+        let canon = match file_path.canonicalize() {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        if visited.contains(&canon) {
+            continue; // already imported
+        }
+        visited.insert(canon);
+
+        let source = match std::fs::read_to_string(&file_path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+
+        let tokens = match lexer::Lexer::tokenize(&source) {
+            Ok(t) => t,
+            Err(e) => {
+                eprintln!("import error in {}: {}", file_path.display(), e);
+                continue;
+            }
+        };
+
+        let mut imported = match parser::Parser::new(tokens).parse() {
+            Ok(p) => p,
+            Err(errors) => {
+                for e in &errors {
+                    eprintln!(
+                        "import parse error in {}: {}",
+                        file_path.display(),
+                        e.message
+                    );
+                }
+                continue;
+            }
+        };
+
+        // recursively resolve imports in the imported file
+        let imported_dir = file_path.parent().unwrap_or(base_dir);
+        resolve_imports_inner(&mut imported, imported_dir, visited);
+
+        // merge: add all non-import items from imported program
+        for item in imported.items {
+            if !matches!(item, parser::ast::TopItem::Import(_)) {
+                program.items.push(item);
+            }
+        }
+    }
+}
+
 fn compile(source: &str) -> CompileResult {
+    compile_with_path(source, None)
+}
+
+fn compile_with_path(source: &str, source_path: Option<&Path>) -> CompileResult {
     let start = Instant::now();
 
     let tokens = match lexer::Lexer::tokenize(source) {
@@ -298,6 +435,14 @@ fn compile(source: &str) -> CompileResult {
             die(&format!("{} parse error(s)", errors.len()));
         }
     };
+
+    // resolve imports relative to the source file's directory
+    if let Some(path) = source_path {
+        if let Some(dir) = path.parent() {
+            resolve_imports(&mut program, dir);
+        }
+    }
+
     parser::monomorph::monomorphize(&mut program);
 
     match types::check::TypeChecker::new().check(&program) {
@@ -546,7 +691,7 @@ fn cmd_build(args: &[String]) {
 
     let output = find_flag(args, "-o").unwrap_or_else(|| input.replace(".kov", ".bin"));
     let source = read_file(input);
-    let result = compile(&source);
+    let result = compile_with_path(&source, Some(Path::new(input)));
 
     let binary = if output.ends_with(".elf") {
         codegen::elf::ElfWriter::new(result.flash_base, result.flash_base).write(&result.compressed)
@@ -673,7 +818,7 @@ fn cmd_run(args: &[String]) {
         .unwrap_or(10_000);
 
     let source = read_file(input);
-    let result = compile(&source);
+    let result = compile_with_path(&source, Some(Path::new(input)));
 
     eprintln!(
         "  compiled: {} bytes ({} compressed) in {:.1}ms",
@@ -757,7 +902,7 @@ fn cmd_asm(args: &[String]) {
         process::exit(1);
     }
     let source = read_file(&args[2]);
-    let result = compile(&source);
+    let result = compile_with_path(&source, Some(Path::new(&args[2])));
     println!(
         "{}",
         codegen::disasm::disassemble(&result.code, result.flash_base, &result.labels)

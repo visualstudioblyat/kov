@@ -56,6 +56,7 @@ struct FnBuilder<'a> {
     vars: HashMap<String, Value>,
     var_kinds: HashMap<String, VarKind>,
     var_types: HashMap<String, String>, // var_name → struct type name (for field access)
+    mut_slots: HashMap<String, Value>,  // mutable locals: name → stack slot address
     periph_map: &'a PeripheralMap,
     globals: &'a super::globals::GlobalTable,
     struct_layouts: &'a HashMap<String, StructLayout>,
@@ -325,12 +326,20 @@ fn lower_fn(
         vars,
         var_kinds,
         var_types: HashMap::new(),
+        mut_slots: HashMap::new(),
         periph_map,
         globals,
         struct_layouts,
         enum_variants,
         loop_stack: Vec::new(),
     };
+
+    // pre-scan: find variables that get reassigned and allocate stack slots
+    let mutable_vars = find_mutable_vars(&f.body.stmts);
+    for var_name in &mutable_vars {
+        let slot = builder.emit(Op::StackAlloc(4), IrType::Ptr);
+        builder.mut_slots.insert(var_name.clone(), slot);
+    }
 
     for stmt in &f.body.stmts {
         builder.lower_stmt(stmt);
@@ -347,6 +356,46 @@ fn lower_fn(
     }
 
     func
+}
+
+// find all local variable names that are targets of Assign statements
+fn find_mutable_vars(stmts: &[Stmt]) -> Vec<String> {
+    let mut result = Vec::new();
+    find_mutable_vars_inner(stmts, &mut result);
+    result
+}
+
+fn find_mutable_vars_inner(stmts: &[Stmt], result: &mut Vec<String>) {
+    for stmt in stmts {
+        match stmt {
+            Stmt::Assign { target, .. } => {
+                if let Expr::Ident(name, _) = target {
+                    if !result.contains(name) {
+                        result.push(name.clone());
+                    }
+                }
+            }
+            Stmt::If {
+                then_block,
+                else_block,
+                ..
+            } => {
+                find_mutable_vars_inner(&then_block.stmts, result);
+                if let Some(eb) = else_block {
+                    match eb {
+                        ast::ElseBranch::Else(b) => find_mutable_vars_inner(&b.stmts, result),
+                        ast::ElseBranch::ElseIf(s) => {
+                            find_mutable_vars_inner(&[*s.clone()], result)
+                        }
+                    }
+                }
+            }
+            Stmt::Loop(_, body, _) | Stmt::While { body, .. } | Stmt::For { body, .. } => {
+                find_mutable_vars_inner(&body.stmts, result);
+            }
+            _ => {}
+        }
+    }
 }
 
 impl<'a> FnBuilder<'a> {
@@ -434,6 +483,10 @@ impl<'a> FnBuilder<'a> {
                 }
                 let val = self.lower_expr(value);
                 self.vars.insert(name.clone(), val);
+                // if this variable is mutable (has a pre-allocated slot), store initial value
+                if let Some(&slot) = self.mut_slots.get(name) {
+                    self.emit(Op::Store(slot, val), IrType::Void);
+                }
             }
 
             Stmt::Assign { target, value, .. } => {
@@ -445,10 +498,28 @@ impl<'a> FnBuilder<'a> {
                         self.emit(Op::Store(addr, val), IrType::Void);
                         return;
                     }
+                    // local variable reassignment via pre-allocated stack slot
+                    if let Some(&slot) = self.mut_slots.get(name) {
+                        let val = self.lower_expr(value);
+                        self.emit(Op::Store(slot, val), IrType::Void);
+                        return;
+                    }
                 }
-                let _addr = self.lower_expr(target);
-                let _val = self.lower_expr(value);
-                // TODO: proper store via address resolution for non-globals
+                if let Expr::Index(arr_expr, idx_expr, _) = target {
+                    // array element assignment: arr[i] = val
+                    let arr = self.lower_expr(arr_expr);
+                    let idx = self.lower_expr(idx_expr);
+                    let val = self.lower_expr(value);
+                    let four = self.emit(Op::ConstI32(4), IrType::I32);
+                    let offset = self.emit(Op::Mul(idx, four), IrType::I32);
+                    let addr = self.emit(Op::Add(arr, offset), IrType::I32);
+                    self.emit(Op::Store(addr, val), IrType::Void);
+                    return;
+                }
+                // field assignment, pointer deref, etc
+                let addr = self.lower_expr(target);
+                let val = self.lower_expr(value);
+                self.emit(Op::Store(addr, val), IrType::Void);
             }
 
             Stmt::Expr(expr) => {
@@ -834,6 +905,10 @@ impl<'a> FnBuilder<'a> {
             Expr::BoolLit(v, _) => self.emit(Op::ConstBool(*v), IrType::Bool),
 
             Expr::Ident(name, _) => {
+                // check for mutable local (stack-allocated)
+                if let Some(&slot) = self.mut_slots.get(name) {
+                    return self.emit(Op::Load(slot, IrType::I32), IrType::I32);
+                }
                 if let Some(&val) = self.vars.get(name) {
                     val
                 } else if let Some(g) = self.globals.find(name) {
@@ -943,6 +1018,48 @@ impl<'a> FnBuilder<'a> {
             // method calls and function calls → Call op
             Expr::Call(callee, args, _) => {
                 if let Expr::Ident(name, _) = callee.as_ref() {
+                    // VFS builtins: inline the MMIO operations to avoid function call overhead
+                    if name == "fs_open" && args.len() == 1 {
+                        let ptr = self.lower_expr(&args[0]);
+                        let addr = self.emit(Op::ConstI32(0xF000_0000u32 as i32), IrType::I32);
+                        self.emit(Op::VolatileStore(addr, ptr), IrType::Void);
+                        return self.emit(Op::VolatileLoad(addr, IrType::I32), IrType::I32);
+                    }
+                    if name == "fs_create" && args.len() == 1 {
+                        let ptr = self.lower_expr(&args[0]);
+                        let addr = self.emit(Op::ConstI32(0xF000_001Cu32 as i32), IrType::I32);
+                        self.emit(Op::VolatileStore(addr, ptr), IrType::Void);
+                        return self.emit(Op::VolatileLoad(addr, IrType::I32), IrType::I32);
+                    }
+                    if name == "fs_read_byte" && args.len() == 1 {
+                        let fd = self.lower_expr(&args[0]);
+                        let addr = self.emit(Op::ConstI32(0xF000_0004u32 as i32), IrType::I32);
+                        self.emit(Op::VolatileStore(addr, fd), IrType::Void);
+                        return self.emit(Op::VolatileLoad(addr, IrType::I32), IrType::I32);
+                    }
+                    if name == "fs_write_byte" && args.len() == 2 {
+                        let fd = self.lower_expr(&args[0]);
+                        let byte = self.lower_expr(&args[1]);
+                        let shift = self.emit(Op::ConstI32(256), IrType::I32);
+                        let shifted = self.emit(Op::Mul(fd, shift), IrType::I32);
+                        let val = self.emit(Op::Add(shifted, byte), IrType::I32);
+                        let addr = self.emit(Op::ConstI32(0xF000_0008u32 as i32), IrType::I32);
+                        self.emit(Op::VolatileStore(addr, val), IrType::Void);
+                        return self.emit(Op::Nop, IrType::Void);
+                    }
+                    if name == "fs_close" && args.len() == 1 {
+                        let fd = self.lower_expr(&args[0]);
+                        let addr = self.emit(Op::ConstI32(0xF000_000Cu32 as i32), IrType::I32);
+                        self.emit(Op::VolatileStore(addr, fd), IrType::Void);
+                        return self.emit(Op::Nop, IrType::Void);
+                    }
+                    if name == "fs_flush" && args.len() == 1 {
+                        let fd = self.lower_expr(&args[0]);
+                        let addr = self.emit(Op::ConstI32(0xF000_0020u32 as i32), IrType::I32);
+                        self.emit(Op::VolatileStore(addr, fd), IrType::Void);
+                        return self.emit(Op::VolatileLoad(addr, IrType::I32), IrType::I32);
+                    }
+
                     // builtins: write_mmio(addr, val) and read_mmio(addr)
                     if name == "write_mmio" && args.len() == 2 {
                         let addr = self.lower_expr(&args[0]);
@@ -962,6 +1079,108 @@ impl<'a> FnBuilder<'a> {
                         let addr = self.lower_expr(&args[0]);
                         let val = self.lower_expr(&args[1]);
                         self.emit(Op::Store(addr, val), IrType::Void);
+                        return self.emit(Op::Nop, IrType::Void);
+                    }
+                    if name == "read_word" && args.len() == 1 {
+                        let addr = self.lower_expr(&args[0]);
+                        return self.emit(Op::Load(addr, IrType::I32), IrType::I32);
+                    }
+                    if name == "write_word" && args.len() == 2 {
+                        let addr = self.lower_expr(&args[0]);
+                        let val = self.lower_expr(&args[1]);
+                        self.emit(Op::Store(addr, val), IrType::Void);
+                        return self.emit(Op::Nop, IrType::Void);
+                    }
+                    // strlen: count bytes until null terminator
+                    if name == "strlen" && args.len() == 1 {
+                        let ptr = self.lower_expr(&args[0]);
+                        let zero = self.emit(Op::ConstI32(0), IrType::I32);
+                        let one = self.emit(Op::ConstI32(1), IrType::I32);
+
+                        let loop_bb = self.func.new_block();
+                        let done_bb = self.func.new_block();
+
+                        // jump to loop with (ptr, 0)
+                        self.func.set_terminator(
+                            self.current_block,
+                            Terminator::Jump(loop_bb, vec![ptr, zero]),
+                        );
+
+                        // loop header: block params = (cur_ptr, cur_len)
+                        let cur_ptr = self.func.add_block_param(loop_bb, IrType::I32);
+                        let cur_len = self.func.add_block_param(loop_bb, IrType::I32);
+
+                        self.current_block = loop_bb;
+                        let byte = self.emit(Op::Load(cur_ptr, IrType::I8), IrType::I32);
+                        let is_zero = self.emit(Op::Eq(byte, zero), IrType::Bool);
+                        let cont_bb = self.func.new_block();
+                        self.func.set_terminator(
+                            self.current_block,
+                            Terminator::BranchIf {
+                                cond: is_zero,
+                                then_block: done_bb,
+                                then_args: vec![cur_len],
+                                else_block: cont_bb,
+                                else_args: vec![],
+                            },
+                        );
+                        self.current_block = cont_bb;
+                        let next_ptr = self.emit(Op::Add(cur_ptr, one), IrType::I32);
+                        let next_len = self.emit(Op::Add(cur_len, one), IrType::I32);
+                        self.func.set_terminator(
+                            self.current_block,
+                            Terminator::Jump(loop_bb, vec![next_ptr, next_len]),
+                        );
+
+                        // done block: result is cur_len
+                        let result = self.func.add_block_param(done_bb, IrType::I32);
+                        self.current_block = done_bb;
+                        return result;
+                    }
+                    // memcpy: copy n bytes from src to dst
+                    if name == "memcpy" && args.len() == 3 {
+                        let dst = self.lower_expr(&args[0]);
+                        let src = self.lower_expr(&args[1]);
+                        let len = self.lower_expr(&args[2]);
+                        let zero = self.emit(Op::ConstI32(0), IrType::I32);
+                        let one = self.emit(Op::ConstI32(1), IrType::I32);
+
+                        let loop_bb = self.func.new_block();
+                        let done_bb = self.func.new_block();
+
+                        self.func.set_terminator(
+                            self.current_block,
+                            Terminator::Jump(loop_bb, vec![zero]),
+                        );
+
+                        let i = self.func.add_block_param(loop_bb, IrType::I32);
+                        self.current_block = loop_bb;
+                        let cond = self.emit(Op::Lt(i, len), IrType::Bool);
+
+                        let body_bb = self.func.new_block();
+                        self.func.set_terminator(
+                            self.current_block,
+                            Terminator::BranchIf {
+                                cond,
+                                then_block: body_bb,
+                                then_args: vec![],
+                                else_block: done_bb,
+                                else_args: vec![],
+                            },
+                        );
+
+                        self.current_block = body_bb;
+                        let src_addr = self.emit(Op::Add(src, i), IrType::I32);
+                        let byte = self.emit(Op::Load(src_addr, IrType::I8), IrType::I32);
+                        let dst_addr = self.emit(Op::Add(dst, i), IrType::I32);
+                        self.emit(Op::Store(dst_addr, byte), IrType::Void);
+                        let next_i = self.emit(Op::Add(i, one), IrType::I32);
+                        self.func.set_terminator(
+                            self.current_block,
+                            Terminator::Jump(loop_bb, vec![next_i]),
+                        );
+
+                        self.current_block = done_bb;
                         return self.emit(Op::Nop, IrType::Void);
                     }
                     // check if this is an enum variant constructor
