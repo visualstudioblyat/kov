@@ -455,7 +455,13 @@ pub fn inline_functions(functions: &mut Vec<Function>) {
                                 .insts
                                 .iter()
                                 .any(|i| matches!(i.op, Op::Call(_, _)));
-                            if !has_calls && args.len() == params.len() {
+                            let has_side_effects = blocks[0].insts.iter().any(|i| {
+                                matches!(
+                                    i.op,
+                                    Op::Store(_, _) | Op::VolatileStore(_, _) | Op::StackAlloc(_)
+                                )
+                            });
+                            if !has_calls && !has_side_effects && args.len() == params.len() {
                                 // simple case: replace call with the return value's computation
                                 // find the return value
                                 if let Terminator::Return(Some(ret_val)) = &blocks[0].terminator {

@@ -46,6 +46,9 @@ struct RegAlloc {
     pending_loads: Vec<(u32, i32)>,
     last_use: HashMap<u32, usize>, // Value.0 → instruction index of last use
     current_inst: usize,           // current instruction index during codegen
+    block_param_regs: HashMap<(u32, usize), u32>, // (block_idx, param_idx) → register
+    pinned_values: Vec<u32>,       // values that should never be expired (block params)
+    needs_sreg: Vec<u32>,          // values that must be allocated to S-regs (loop header uses)
 }
 
 // allocatable registers in priority order: temporaries first, then callee-saved
@@ -54,9 +57,48 @@ const REGS: &[u32] = &[
 ];
 
 // compute last-use index for every value in a function
+// loop-aware: values used inside loop bodies get their last_use extended
+// to the loop's back-edge so they aren't freed prematurely
 fn compute_last_use(func: &Function) -> HashMap<u32, usize> {
     let mut last_use: HashMap<u32, usize> = HashMap::new();
     let mut idx = 0usize;
+
+    // first pass: record instruction index ranges per block
+    let mut block_start: Vec<usize> = Vec::new();
+    let mut block_end: Vec<usize> = Vec::new();
+    let mut temp_idx = 0usize;
+    for block in &func.blocks {
+        block_start.push(temp_idx);
+        temp_idx += block.insts.len();
+        temp_idx += 1; // terminator
+        block_end.push(temp_idx - 1);
+    }
+
+    // detect back-edges: a Jump from block B to block H where H <= B
+    // for each back-edge, all values used in blocks [H..=B] need last_use >= B's end
+    let mut loop_ranges: Vec<(usize, usize)> = Vec::new(); // (header_block, back_edge_block)
+    for (bi, block) in func.blocks.iter().enumerate() {
+        match &block.terminator {
+            Terminator::Jump(target, _) if (target.0 as usize) <= bi => {
+                loop_ranges.push((target.0 as usize, bi));
+            }
+            Terminator::BranchIf {
+                then_block,
+                else_block,
+                ..
+            } => {
+                if (then_block.0 as usize) <= bi {
+                    loop_ranges.push((then_block.0 as usize, bi));
+                }
+                if (else_block.0 as usize) <= bi {
+                    loop_ranges.push((else_block.0 as usize, bi));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // second pass: compute last_use
     for block in &func.blocks {
         for inst in &block.insts {
             for v in op_uses(&inst.op) {
@@ -64,12 +106,33 @@ fn compute_last_use(func: &Function) -> HashMap<u32, usize> {
             }
             idx += 1;
         }
-        // terminators also use values
         for v in term_uses(&block.terminator) {
             last_use.insert(v, idx);
         }
         idx += 1;
     }
+
+    // extend last_use for values defined before or inside a loop
+    // to at least the back-edge terminator index
+    for (header, back_edge) in &loop_ranges {
+        let loop_end_idx = block_end[*back_edge];
+        let loop_start_idx = block_start[*header];
+        // any value whose current last_use falls within the loop range
+        // AND is defined before or at the loop, extend to loop end
+        for (_val, lu) in last_use.iter_mut() {
+            // value is used inside the loop — extend to loop end
+            if *lu >= loop_start_idx && *lu <= loop_end_idx && *lu < loop_end_idx {
+                *lu = loop_end_idx;
+            }
+        }
+        // also extend values defined before the loop that are used inside it
+        for (_val, lu) in last_use.iter_mut() {
+            if *lu >= loop_start_idx && *lu <= loop_end_idx {
+                *lu = loop_end_idx;
+            }
+        }
+    }
+
     last_use
 }
 
@@ -133,6 +196,9 @@ impl RegAlloc {
             pending_loads: Vec::new(),
             last_use,
             current_inst: 0,
+            block_param_regs: HashMap::new(),
+            pinned_values: Vec::new(),
+            needs_sreg: Vec::new(),
         }
     }
 
@@ -141,7 +207,10 @@ impl RegAlloc {
         let mut dead_vals: Vec<u32> = self
             .map
             .keys()
-            .filter(|val_id| self.last_use.get(val_id).copied().unwrap_or(0) < self.current_inst)
+            .filter(|val_id| {
+                !self.pinned_values.contains(val_id)
+                    && self.last_use.get(val_id).copied().unwrap_or(0) < self.current_inst
+            })
             .copied()
             .collect();
         dead_vals.sort(); // deterministic order for reproducible builds
@@ -156,6 +225,27 @@ impl RegAlloc {
         }
     }
 
+    fn get_in_sreg(&mut self, val: Value) -> u32 {
+        // if already in an S-reg, return it
+        if let Some(&reg) = self.map.get(&val.0) {
+            if S_REGS.contains(&reg) {
+                return reg;
+            }
+        }
+        // allocate an S-reg
+        if let Some(idx) = self.free_regs.iter().position(|r| S_REGS.contains(r)) {
+            let reg = self.free_regs.remove(idx);
+            self.map.insert(val.0, reg);
+            self.pinned_values.push(val.0);
+            if !self.used_s_regs.contains(&reg) {
+                self.used_s_regs.push(reg);
+            }
+            reg
+        } else {
+            self.get(val) // fallback
+        }
+    }
+
     fn get(&mut self, val: Value) -> u32 {
         if let Some(&reg) = self.map.get(&val.0) {
             if let Some(&slot) = self.spill_slots.get(&val.0) {
@@ -166,6 +256,19 @@ impl RegAlloc {
 
         // expire dead values to free their registers
         self.expire_old();
+
+        // if this value needs to be in an S-reg (used in loop header), allocate one
+        if self.needs_sreg.contains(&val.0) {
+            if let Some(idx) = self.free_regs.iter().position(|r| S_REGS.contains(r)) {
+                let reg = self.free_regs.remove(idx);
+                self.map.insert(val.0, reg);
+                self.pinned_values.push(val.0);
+                if !self.used_s_regs.contains(&reg) {
+                    self.used_s_regs.push(reg);
+                }
+                return reg;
+            }
+        }
 
         if let Some(reg) = self.free_regs.pop() {
             self.map.insert(val.0, reg);
@@ -291,13 +394,97 @@ impl CodeGen {
             }
         }
 
+        // detect values used inside loops that are defined before the loop.
+        // these must be in callee-saved regs since the loop body is emitted
+        // once but executed multiple times — registers get clobbered between iterations
+        let mut loop_stable_values: Vec<u32> = Vec::new();
+        {
+            // find all loop ranges (header_block..=back_edge_block)
+            let mut loops: Vec<(usize, usize)> = Vec::new();
+            for (bi, block) in func.blocks.iter().enumerate() {
+                match &block.terminator {
+                    Terminator::Jump(target, _) if (target.0 as usize) <= bi => {
+                        loops.push((target.0 as usize, bi));
+                    }
+                    _ => {}
+                }
+            }
+
+            // collect values defined in each block
+            let mut block_defs: Vec<Vec<u32>> = Vec::new();
+            for block in &func.blocks {
+                let mut defs = Vec::new();
+                for (val, _) in &block.params {
+                    defs.push(val.0);
+                }
+                for inst in &block.insts {
+                    defs.push(inst.result.0);
+                }
+                block_defs.push(defs);
+            }
+
+            for (header, back_edge) in &loops {
+                // values defined before the loop
+                let mut pre_loop_defs: Vec<u32> = Vec::new();
+                for bi in 0..*header {
+                    pre_loop_defs.extend_from_slice(&block_defs[bi]);
+                }
+                // also include function params
+                for (i, _) in func.params.iter().enumerate() {
+                    pre_loop_defs.push(i as u32);
+                }
+
+                // values used inside the loop (header through back-edge)
+                for bi in *header..=*back_edge {
+                    let block = &func.blocks[bi];
+                    for inst in &block.insts {
+                        for v in op_uses(&inst.op) {
+                            if pre_loop_defs.contains(&v) && !loop_stable_values.contains(&v) {
+                                loop_stable_values.push(v);
+                            }
+                        }
+                    }
+                    for v in term_uses(&block.terminator) {
+                        if pre_loop_defs.contains(&v) && !loop_stable_values.contains(&v) {
+                            loop_stable_values.push(v);
+                        }
+                    }
+                }
+            }
+        }
+
+        ra.needs_sreg = loop_stable_values;
+
+        // pre-allocate callee-saved registers for all block parameters
+        // block params are loop variables (phi nodes) that must survive across
+        // the entire loop body including function calls, so they need S-regs
+        for (bi, block) in func.blocks.iter().enumerate() {
+            for (pi, (val, _ty)) in block.params.iter().enumerate() {
+                // grab an S-reg so it survives across calls
+                let s_reg = ra
+                    .free_regs
+                    .iter()
+                    .position(|r| S_REGS.contains(r))
+                    .map(|idx| ra.free_regs.remove(idx));
+                if let Some(reg) = s_reg {
+                    ra.map.insert(val.0, reg);
+                    ra.pinned_values.push(val.0);
+                    if !ra.used_s_regs.contains(&reg) {
+                        ra.used_s_regs.push(reg);
+                    }
+                    ra.block_param_regs.insert((bi as u32, pi), reg);
+                } else {
+                    // fallback: allocate any register
+                    let reg = ra.get(*val);
+                    ra.pinned_values.push(val.0);
+                    ra.block_param_regs.insert((bi as u32, pi), reg);
+                }
+            }
+        }
+
         for (bi, block) in func.blocks.iter().enumerate() {
             let block_label = format!("{}.b{}", func.name, bi);
             self.emitter.label(&block_label);
-
-            for (val, _ty) in &block.params {
-                ra.get(*val);
-            }
 
             for inst in &block.insts {
                 let rd = ra.get(inst.result);
@@ -323,7 +510,19 @@ impl CodeGen {
         self.emitter.label(&func.name);
 
         // prologue: allocate frame, save RA and used s-regs
-        self.emitter.emit32(addi(SP, SP, -frame));
+        // for large frames, use multiple addi instructions
+        if frame <= 2047 {
+            self.emitter.emit32(addi(SP, SP, -frame));
+        } else {
+            let mut remaining = frame;
+            while remaining > 2047 {
+                self.emitter.emit32(addi(SP, SP, -2047));
+                remaining -= 2047;
+            }
+            if remaining > 0 {
+                self.emitter.emit32(addi(SP, SP, -remaining));
+            }
+        }
         self.emitter.emit32(sw(SP, RA, frame - 4));
         for (i, &sreg) in ra.used_s_regs.iter().enumerate() {
             self.emitter
@@ -480,25 +679,25 @@ impl CodeGen {
             }
 
             Op::Call(name, args) => {
-                // save live caller-saved values to callee-saved regs before call
+                // save live caller-saved values to stack before call, restore after
+                // this avoids register remapping which breaks loops
                 let caller_saved: Vec<u32> = vec![T0, T1, T2, A0, A1, A2, A3, A4, A5, A6, A7];
                 let saves: Vec<(u32, u32)> = ra
                     .map
                     .iter()
-                    .filter(|(_, reg)| caller_saved.contains(reg))
+                    .filter(|(val_id, reg)| {
+                        caller_saved.contains(reg)
+                            && ra.last_use.get(val_id).copied().unwrap_or(0) > ra.current_inst
+                    })
                     .map(|(&val_id, &reg)| (val_id, reg))
                     .collect();
 
-                for (val_id, old_reg) in &saves {
-                    // find a free callee-saved register
-                    let s_reg = ra.free_regs.iter().find(|r| S_REGS.contains(r)).copied();
-                    if let Some(s) = s_reg {
-                        self.emitter.emit32(mv(s, *old_reg));
-                        ra.map.insert(*val_id, s);
-                        ra.free_regs.retain(|&r| r != s);
-                        if !ra.used_s_regs.contains(&s) {
-                            ra.used_s_regs.push(s);
-                        }
+                // push live caller-saved regs to stack
+                if !saves.is_empty() {
+                    let save_size = (saves.len() as i32 * 4 + 15) & !15;
+                    self.emitter.emit32(addi(SP, SP, -save_size));
+                    for (si, (_val_id, reg)) in saves.iter().enumerate() {
+                        self.emitter.emit32(sw(SP, *reg, si as i32 * 4));
                     }
                 }
 
@@ -513,6 +712,17 @@ impl CodeGen {
                 self.emitter.emit_jump(jal(RA, 0), name);
                 if rd != A0 {
                     self.emitter.emit32(mv(rd, A0));
+                }
+
+                // restore saved regs from stack, but skip the result register
+                if !saves.is_empty() {
+                    let save_size = (saves.len() as i32 * 4 + 15) & !15;
+                    for (si, (_val_id, reg)) in saves.iter().enumerate() {
+                        if *reg != rd {
+                            self.emitter.emit32(lw(*reg, SP, si as i32 * 4));
+                        }
+                    }
+                    self.emitter.emit32(addi(SP, SP, save_size));
                 }
             }
 
@@ -598,17 +808,46 @@ impl CodeGen {
                 self.emitter
                     .emit_jump(j_offset(0), &format!("{}.epilogue", fn_name));
             }
-            Terminator::Jump(target, _args) => {
+            Terminator::Jump(target, args) => {
+                // move args into the registers expected by the target block's params
+                for (i, arg) in args.iter().enumerate() {
+                    let src = ra.get(*arg);
+                    if let Some(&dst) = ra.block_param_regs.get(&(target.0, i)) {
+                        if src != dst {
+                            self.emitter.emit32(mv(dst, src));
+                        }
+                    }
+                }
                 let target_label = format!("{}.b{}", fn_name, target.0);
                 self.emitter.emit_jump(j_offset(0), &target_label);
             }
             Terminator::BranchIf {
                 cond,
                 then_block,
+                then_args,
                 else_block,
-                ..
+                else_args,
             } => {
                 let cond_reg = ra.get(*cond);
+                // move args for both branches before branching
+                // (for now, both branches get their args moved — safe since
+                // block params are typically the same register for both paths)
+                for (i, arg) in then_args.iter().enumerate() {
+                    let src = ra.get(*arg);
+                    if let Some(&dst) = ra.block_param_regs.get(&(then_block.0, i)) {
+                        if src != dst {
+                            self.emitter.emit32(mv(dst, src));
+                        }
+                    }
+                }
+                for (i, arg) in else_args.iter().enumerate() {
+                    let src = ra.get(*arg);
+                    if let Some(&dst) = ra.block_param_regs.get(&(else_block.0, i)) {
+                        if src != dst {
+                            self.emitter.emit32(mv(dst, src));
+                        }
+                    }
+                }
                 let then_label = format!("{}.b{}", fn_name, then_block.0);
                 let else_label = format!("{}.b{}", fn_name, else_block.0);
                 self.emitter
