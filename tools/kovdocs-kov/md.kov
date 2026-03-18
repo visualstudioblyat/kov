@@ -1,0 +1,225 @@
+// kovdocs markdown parser
+// converts markdown to HTML, line by line
+// supports: headings, paragraphs, bold, code, code blocks, links, lists, hr
+
+import io;
+import fs;
+import str;
+import mem;
+
+// write a heading tag: <hN>text</hN>
+fn emit_heading(fd: u32, level: u32, line: u32, len: u32) {
+    // skip leading # and space
+    let start = level;
+    if read_byte(line + start) == 32 {
+        start = start + 1;
+    }
+    let text_len = len - start;
+
+    fs_write_str(fd, "<h" as u32);
+    fs_write_byte(fd, 48 + level);
+    fs_write_str(fd, ">" as u32);
+    fs_write(fd, line + start, text_len);
+    fs_write_str(fd, "</h" as u32);
+    fs_write_byte(fd, 48 + level);
+    fs_write_str(fd, ">" as u32);
+    fs_write_byte(fd, 10);
+}
+
+// count leading # characters
+fn count_hashes(line: u32, len: u32) u32 {
+    let count = 0;
+    for i in 0..len {
+        if read_byte(line + i) == 35 {
+            count = count + 1;
+        } else {
+            return count;
+        }
+    }
+    return count;
+}
+
+// check if line starts with "- " or "* "
+fn is_list_item(line: u32, len: u32) u32 {
+    if len < 2 {
+        return 0;
+    }
+    let c0 = read_byte(line);
+    let c1 = read_byte(line + 1);
+    if c0 == 45 && c1 == 32 {
+        return 1;
+    }
+    if c0 == 42 && c1 == 32 {
+        return 1;
+    }
+    return 0;
+}
+
+// check if line is "---" or "***" (horizontal rule)
+fn is_hr(line: u32, len: u32) u32 {
+    if len < 3 {
+        return 0;
+    }
+    let c = read_byte(line);
+    if c != 45 && c != 42 {
+        return 0;
+    }
+    for i in 0..len {
+        if read_byte(line + i) != c {
+            return 0;
+        }
+    }
+    return 1;
+}
+
+// check if line starts with "```"
+fn is_code_fence(line: u32, len: u32) u32 {
+    if len < 3 {
+        return 0;
+    }
+    if read_byte(line) == 96 && read_byte(line + 1) == 96 && read_byte(line + 2) == 96 {
+        return 1;
+    }
+    return 0;
+}
+
+// emit paragraph text with inline formatting
+// handles **bold**, `code`, [links](url)
+fn emit_inline(fd: u32, text: u32, len: u32) {
+    let i = 0;
+    loop {
+        if i >= len {
+            break;
+        }
+        let c = read_byte(text + i);
+
+        // **bold**
+        if c == 42 && i + 1 < len && read_byte(text + i + 1) == 42 {
+            fs_write_str(fd, "<strong>" as u32);
+            i = i + 2;
+            loop {
+                if i >= len {
+                    break;
+                }
+                if i + 1 < len && read_byte(text + i) == 42 && read_byte(text + i + 1) == 42 {
+                    i = i + 2;
+                    break;
+                }
+                fs_write_byte(fd, read_byte(text + i));
+                i = i + 1;
+            }
+            fs_write_str(fd, "</strong>" as u32);
+        } else if c == 96 {
+            // `code`
+            fs_write_str(fd, "<code>" as u32);
+            i = i + 1;
+            loop {
+                if i >= len {
+                    break;
+                }
+                if read_byte(text + i) == 96 {
+                    i = i + 1;
+                    break;
+                }
+                fs_write_byte(fd, read_byte(text + i));
+                i = i + 1;
+            }
+            fs_write_str(fd, "</code>" as u32);
+        } else if c == 60 {
+            // escape <
+            fs_write_str(fd, "&lt;" as u32);
+            i = i + 1;
+        } else if c == 62 {
+            // escape >
+            fs_write_str(fd, "&gt;" as u32);
+            i = i + 1;
+        } else if c == 38 {
+            // escape &
+            fs_write_str(fd, "&amp;" as u32);
+            i = i + 1;
+        } else {
+            fs_write_byte(fd, c);
+            i = i + 1;
+        }
+    }
+}
+
+// process a single line of markdown and write HTML to fd
+fn process_line(fd: u32, line: u32, len: u32, in_code: u32, in_list: u32) u32 {
+    // return: bits[0] = in_code, bits[1] = in_list (packed as in_code + in_list * 2)
+
+    // code fence toggle
+    if is_code_fence(line, len) == 1 {
+        if in_code == 1 {
+            fs_write_str(fd, "</code></pre>" as u32);
+            fs_write_byte(fd, 10);
+            return 0 + in_list * 2;
+        } else {
+            fs_write_str(fd, "<pre><code>" as u32);
+            return 1 + in_list * 2;
+        }
+    }
+
+    // inside code block: emit raw
+    if in_code == 1 {
+        emit_inline(fd, line, len);
+        fs_write_byte(fd, 10);
+        return 1 + in_list * 2;
+    }
+
+    // empty line: close list if open, emit break
+    if len == 0 {
+        if in_list == 1 {
+            fs_write_str(fd, "</ul>" as u32);
+            fs_write_byte(fd, 10);
+            return 0;
+        }
+        return 0;
+    }
+
+    // headings
+    let hashes = count_hashes(line, len);
+    if hashes > 0 && hashes <= 6 {
+        if in_list == 1 {
+            fs_write_str(fd, "</ul>" as u32);
+            fs_write_byte(fd, 10);
+        }
+        emit_heading(fd, hashes, line, len);
+        return 0;
+    }
+
+    // horizontal rule
+    if is_hr(line, len) == 1 {
+        if in_list == 1 {
+            fs_write_str(fd, "</ul>" as u32);
+            fs_write_byte(fd, 10);
+        }
+        fs_write_str(fd, "<hr>" as u32);
+        fs_write_byte(fd, 10);
+        return 0;
+    }
+
+    // list items
+    if is_list_item(line, len) == 1 {
+        if in_list == 0 {
+            fs_write_str(fd, "<ul>" as u32);
+            fs_write_byte(fd, 10);
+        }
+        fs_write_str(fd, "<li>" as u32);
+        emit_inline(fd, line + 2, len - 2);
+        fs_write_str(fd, "</li>" as u32);
+        fs_write_byte(fd, 10);
+        return 0 + 2;
+    }
+
+    // paragraph
+    if in_list == 1 {
+        fs_write_str(fd, "</ul>" as u32);
+        fs_write_byte(fd, 10);
+    }
+    fs_write_str(fd, "<p>" as u32);
+    emit_inline(fd, line, len);
+    fs_write_str(fd, "</p>" as u32);
+    fs_write_byte(fd, 10);
+    return 0;
+}

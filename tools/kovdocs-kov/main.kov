@@ -1,0 +1,46 @@
+// kovdocs — static site generator written in kov
+// minimal version: read file, output HTML
+
+import io;
+import fs;
+import template;
+
+fn convert_file(in_path: u32, out_path: u32, title: u32) {
+    let in_fd = fs_open(in_path);
+    if in_fd == 0 {
+        println("error: could not open input" as u32);
+        return;
+    }
+
+    let out_fd = fs_create(out_path);
+    write_header(out_fd, title);
+
+    // copy file content wrapped in <pre> for now
+    fs_write_str(out_fd, "<pre>" as u32);
+    loop {
+        let byte = fs_read_byte(in_fd);
+        if byte == 4294967295 {
+            break;
+        }
+        if byte == 60 {
+            fs_write_str(out_fd, "&lt;" as u32);
+        } else if byte == 62 {
+            fs_write_str(out_fd, "&gt;" as u32);
+        } else if byte == 38 {
+            fs_write_str(out_fd, "&amp;" as u32);
+        } else {
+            fs_write_byte(out_fd, byte);
+        }
+    }
+    fs_write_str(out_fd, "</pre>" as u32);
+
+    write_footer(out_fd);
+    fs_close(out_fd);
+    fs_close(in_fd);
+}
+
+fn main() {
+    println("kovdocs v0.1" as u32);
+    convert_file("docs/index.md" as u32, "docs/output/index.html" as u32, "Kov Documentation" as u32);
+    println("done: docs/output/index.html" as u32);
+}
